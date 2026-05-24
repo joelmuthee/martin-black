@@ -1,0 +1,13 @@
+.tmp_secrets
+.tmp/
+.tmp*
+.wrangler/
+node_modules/
+worker/node_modules/
+worker/.wrangler/
+.claude/
+.firecrawl/
+.playwright-mcp/
+verify-*.jpeg
+verify-*.png
+*.log
