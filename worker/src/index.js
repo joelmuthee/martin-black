@@ -572,7 +572,7 @@ export default {
       }));
       fd.append("locationId", GHL_LOCATION_ID);
       fd.append("formId", GHL_FORM_ID);
-      fd.append("eventData", JSON.stringify({ source: "martinblack-admin", type: "page-visit", domain: "martinblack.essenceautomations.com" }));
+      fd.append("eventData", JSON.stringify({ source: "martinblack-admin", type: "page-visit", domain: "martin-black.essenceautomations.com" }));
       if (captchaV3) fd.append("captchaV3", captchaV3);
       try {
         const r = await fetch("https://backend.leadconnectorhq.com/forms/submit", {
@@ -595,6 +595,11 @@ export default {
       let body;
       try { body = await request.json(); } catch { return json({ error: "invalid json" }, 400); }
       if (!Array.isArray(body.bags)) return json({ error: "bags must be array" }, 400);
+      // Empty-publish guard: refuse to wipe the catalog unless force:true.
+      // A stray empty payload would otherwise silently clear KV with no history.
+      if (body.bags.length === 0 && !body.force) {
+        return json({ error: "refusing to publish empty catalog without force:true" }, 400);
+      }
       const payload = {
         bags: body.bags,
         settings: body.settings || {},
@@ -969,7 +974,7 @@ export default {
           name: (it.name || "New Item").slice(0, 80),
           category,
           description: it.description || "Hand-picked footwear, inspected before listing. Photographed exactly as it is. Pick your size below to enquire.",
-          price: 0,
+          price: Number.isFinite(it.price) && it.price > 0 ? Math.round(it.price) : 0,
           stock,
           sales: [],
           image: uploaded[0],
