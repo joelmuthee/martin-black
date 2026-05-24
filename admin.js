@@ -1,5 +1,5 @@
 // Martin Black Admin
-const ADMIN_PASSWORD = 'it-BxN_WJnM';
+const ADMIN_PASSWORD = 'martin123';
 const API_BASE = 'https://martin-black-api.stawisystems.workers.dev';
 const ADMIN_TOKEN = atob('dEZmLUVuYVMza2s2V1VWSzZZOENIZ1lkbjBWRmdtX3ZXNURJU3VkMGJuaw==');
 
