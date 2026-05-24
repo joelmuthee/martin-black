@@ -79,13 +79,24 @@ NONNAME = re.compile(r"^(ksh|kshs|bob|@?\d|sizes?\b|size\b|colou?rs?\b|"
 
 def clean_name(s):
     s = re.sub(r"#[^\s#]+", "", s)            # strip hashtags
-    s = re.sub(r"[•⭐✨🔥💯☎️📞🚚]+", "", s)         # strip emoji decals
-    s = re.sub(r"\s+", " ", s).strip(" .-•|").strip()
+    s = re.sub(r"[ -￿🀀-🫿]", "", s)  # strip symbols/emoji
+    s = re.sub(r"\s+", " ", s).strip(" .,-•|!:").strip()
     return s
 
 
 def title(s):
     return re.sub(r"\b\w", lambda m: m.group().upper(), s)
+
+
+COLOR_WORDS = (r"black|white|brown|blue|red|grey|gray|green|cream|beige|navy|"
+               r"gum|tan|maroon|pink|purple|orange|gold|silver|panda|multicolou?r")
+
+
+def get_color(cap):
+    """First colourway phrase, e.g. 'Black / White', 'Triple White', 'Panda'."""
+    m = re.search(r"\b((?:triple\s+|all\s+)?(?:" + COLOR_WORDS + r")"
+                  r"(?:\s*[/&]\s*(?:" + COLOR_WORDS + r"))*)\b", cap, re.I)
+    return clean_name(m.group(1)) if m else ""
 
 
 def parse_sizes(text):
@@ -169,6 +180,15 @@ def classify(caption):
     name = title(seg) if seg_ok else (brand_name if brand_name else None)
     if not name:
         return None, None, None, 0, False   # SKIP — no name yielded
+
+    # Append the colourway when found and not already in the name — distinguishes
+    # the many same-model listings (e.g. dozens of Air Force 1) on the cards.
+    color = get_color(cap)
+    if color and color.lower() not in name.lower():
+        name = f"{name} {title(color)}"
+    name = name.strip()
+    if len(name) > 46:                       # word-safe truncation (no mid-word cut)
+        name = name[:46].rsplit(" ", 1)[0].rstrip(" /-,")
 
     # Category
     category = brand_cat
@@ -287,6 +307,101 @@ def fetch_one(cursor):
     return get(url)            # raises RuntimeError if it can't get past the throttle
 
 
+# --- Direct local IG pull (residential IP bypasses the worker's datacenter
+# rate-limit). Paginates /api/v1/feed/user/<id>/ and extracts each item. ---
+LOCAL_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_4 like Mac OS X) "
+                  "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
+    "X-IG-App-ID": "936619743392459",
+    "Accept": "*/*", "Accept-Language": "en-US,en;q=0.9",
+    "Referer": f"https://www.instagram.com/martinblackshoesandtrends/",
+}
+
+
+def _extract_local(m):
+    carousel = m.get("carousel_media") or []
+    urls = []
+    if carousel:
+        for c in carousel:
+            cand = (c.get("image_versions2") or {}).get("candidates") or []
+            if cand:
+                urls.append(cand[0]["url"])
+    else:
+        cand = (m.get("image_versions2") or {}).get("candidates") or []
+        if cand:
+            urls.append(cand[0]["url"])
+    taken = m.get("taken_at")
+    return {
+        "shortcode": m.get("code"),
+        "caption": ((m.get("caption") or {}) or {}).get("text", "") if m.get("caption") else "",
+        "imageUrls": urls,
+        "takenAt": __import__("datetime").datetime.utcfromtimestamp(taken).isoformat() + "Z" if taken else None,
+    }
+
+
+def local_feed(max_posts):
+    posts, seen, cursor = [], set(), ""
+    for page in range(20):
+        u = f"https://i.instagram.com/api/v1/feed/user/{UID}/?count=50" + (f"&max_id={cursor}" if cursor else "")
+        try:
+            d = json.load(urllib.request.urlopen(urllib.request.Request(u, headers=LOCAL_HEADERS), timeout=45))
+        except Exception as e:
+            print(f"  local page {page+1} err: {e}")
+            time.sleep(3); continue
+        new = 0
+        for m in d.get("items", []):
+            it = _extract_local(m)
+            if it["shortcode"] and it["shortcode"] not in seen and it["imageUrls"]:
+                seen.add(it["shortcode"]); posts.append(it); new += 1
+        print(f"  local page {page+1}: +{new} (total {len(posts)}) more={d.get('more_available')}")
+        cursor = d.get("next_max_id") or ""
+        if len(posts) >= max_posts or not d.get("more_available") or not cursor:
+            break
+        time.sleep(1.5)
+    return posts[:max_posts]
+
+
+def run_local(args, token):
+    print(f"Local IG pull (cap {args.max})...")
+    posts = local_feed(args.max)
+    already = set()
+    try:
+        for b in get(f"{API}/api/bags").get("bags", []):
+            if b.get("id", "").startswith("ig_"):
+                already.add(b["id"][3:])
+    except Exception:
+        pass
+    keep, skip = [], 0
+    for it in posts:
+        if it["shortcode"] in already:
+            continue
+        mi = make_item(it, args.imgs)
+        if mi:
+            keep.append(mi)
+        else:
+            skip += 1
+    from collections import Counter
+    print(f"\nPulled {len(posts)} | already {len(already)} | KEEP {len(keep)} | SKIP {skip} (no name)")
+    print("Category spread:", dict(Counter(k["category"] for k in keep)))
+    for k in keep[:60]:
+        eu = sorted(int(s) for s in k["stock"] if s.isdigit())
+        szs = f"EU{eu[0]}-{eu[-1]}" if eu else (",".join(k["stock"]) or "none")
+        print(f"  {k['name'][:30]:30} {k['category']:15} {szs:10} Ksh{k['price']}")
+    if args.dry_run:
+        print("\n[dry-run] nothing committed."); return
+    print(f"\nCommitting {len(keep)} via /api/ig-sync (batches of 6)...")
+    added = 0
+    for i in range(0, len(keep), 6):
+        try:
+            r = post_sync(keep[i:i+6], token)
+            added += r.get("added", 0)
+            print(f"  batch {i//6+1}: added={r.get('added')} errs={len(r.get('errors', []))}")
+        except Exception as e:
+            print(f"  batch {i//6+1}: EXCEPTION {e}")
+        time.sleep(1.0)
+    print(f"\nDONE. added={added} (catalog now ~{len(already)+added})")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--max", type=int, default=150)
@@ -294,6 +409,7 @@ def main():
     ap.add_argument("--imgs", type=int, default=2)
     ap.add_argument("--budget-min", type=float, default=40.0, help="wall-clock budget")
     ap.add_argument("--reset", action="store_true", help="ignore saved cursor, start at feed head")
+    ap.add_argument("--local", action="store_true", help="pull feed directly from IG (residential IP, no throttle)")
     args = ap.parse_args()
 
     token = ""
@@ -304,6 +420,10 @@ def main():
     if not token and not args.dry_run:
         print("ERROR: no admin token found (.tmp_secrets).")
         sys.exit(1)
+
+    if args.local:
+        run_local(args, token)
+        return
 
     cursor, committed_list = ("", []) if args.reset else load_state()
     committed = set(committed_list)
