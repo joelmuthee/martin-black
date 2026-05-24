@@ -144,28 +144,29 @@ def find_brand(text):
     return None, None
 
 
+# Cut a name candidate at the first noise marker (colour / size / price /
+# 2-4 digit number / slash / CTA). Works for newline feed captions AND the
+# single-line captions returned by /api/ig-fetch's embed page.
+NOISE_CUT = re.compile(
+    r"(\bsizes?\b|\bksh\b|\bkshs\b|\bbob\b|\bavailable\b|countrywide|delivery|"
+    r"\bcolou?rs?\b|\b(?:black|white|brown|blue|red|grey|gray|green|cream|beige|"
+    r"navy|gum|tan|maroon|multi(?:colou?r)?)\b|[/\n@]|\b\d{2,4}\b)", re.I)
+
+
 def classify(caption):
     """Return (name, category, stock, price, sold) or (None,...) to skip."""
     cap = html.unescape(caption or "")
     cap = re.sub(r"^[a-z0-9._]+\s+", "", cap) if cap[:30].lower().startswith("martinblack") else cap
-    lines = [l.strip() for l in cap.split("\n") if l.strip()]
-    line1 = lines[0] if lines else ""
 
     brand_name, brand_cat = find_brand(cap)
 
-    # Decide the product NAME
-    name = None
-    cl1 = clean_name(line1)
-    line1_is_real = cl1 and not NONNAME.match(cl1) and not GENERIC_LINE.match(cl1) and len(cl1) >= 3
-    if line1_is_real:
-        name = title(cl1)
-        # If line-1 mentions a brand we can canonicalise, prefer the canonical
-        bn, bc = find_brand(line1)
-        if bn:
-            name = bn if len(cl1) < 6 else name  # keep descriptive line-1 if longer
-    elif brand_name:
-        name = brand_name
+    # Name candidate = text before the first noise marker.
+    head = cap.split("\n")[0] if "\n" in cap else cap
+    m = NOISE_CUT.search(head)
+    seg = clean_name(head[:m.start()] if m else head)
+    seg_ok = seg and 3 <= len(seg) <= 40 and not NONNAME.match(seg) and not GENERIC_LINE.match(seg)
 
+    name = title(seg) if seg_ok else (brand_name if brand_name else None)
     if not name:
         return None, None, None, 0, False   # SKIP — no name yielded
 
@@ -237,43 +238,38 @@ def _save_cache(posts):
     json.dump(posts, open(CACHE, "w", encoding="utf-8"))
 
 
-def fetch_feed(max_posts):
-    # Start from any previously-cached posts so re-runs build on prior pulls.
-    posts = _load_cache()
-    seen = {p["shortcode"] for p in posts if p.get("shortcode")}
-    if posts:
-        print(f"  (loaded {len(posts)} cached posts)")
-    cursor, pages = "", 0
-    while len(posts) < max_posts and pages < 25:
-        url = f"{API}/api/ig-feed?user_id={UID}&count=50"
-        if cursor:
-            url += "&max_id=" + urllib.parse.quote(cursor)
-        d = None
-        for attempt in range(3):           # page-level retry through rate-limit cooldowns
-            try:
-                d = get(url)
-                break
-            except RuntimeError as e:
-                print(f"  page {pages+1} attempt {attempt+1} failed ({e}); cooling down 60s")
-                time.sleep(60)
-        if d is None:
-            print("  (giving up pagination after cooldowns)")
-            break
-        pages += 1
-        new = 0
-        for it in d.get("items", []):
-            sc = it.get("shortcode")
-            if sc and sc not in seen and it.get("imageUrls"):
-                seen.add(sc)
-                posts.append(it)
-                new += 1
-        print(f"  page {pages}: +{new} (total {len(posts)}) more={d.get('more_available')}")
-        _save_cache(posts)
-        cursor = d.get("next_max_id") or ""
-        if not d.get("more_available") or not cursor or (new == 0 and pages > 1):
-            break
-        time.sleep(3)
-    return posts[:max_posts]
+STATE = ".tmp/ig_state.json"
+
+
+def load_state():
+    try:
+        s = json.load(open(STATE, encoding="utf-8"))
+        return s.get("cursor", ""), s.get("committed", [])
+    except Exception:
+        return "", []
+
+
+def save_state(cursor, committed):
+    import os
+    os.makedirs(".tmp", exist_ok=True)
+    json.dump({"cursor": cursor, "committed": sorted(committed)},
+              open(STATE, "w", encoding="utf-8"))
+
+
+def make_item(it, imgs):
+    name, cat, stock, price, sold = classify(it.get("caption", ""))
+    if not name:
+        return None
+    return {
+        "shortcode": it["shortcode"],
+        "name": name,
+        "category": cat,
+        "stock": stock,
+        "price": price,
+        "description": build_desc(name, it.get("caption", ""), stock),
+        "imageUrls": it.get("imageUrls", [])[:imgs],
+        "takenAt": it.get("takenAt"),
+    }
 
 
 def post_sync(items, token):
@@ -284,12 +280,20 @@ def post_sync(items, token):
     return json.load(urllib.request.urlopen(req, timeout=180))
 
 
+def fetch_one(cursor):
+    url = f"{API}/api/ig-feed?user_id={UID}&count=50"
+    if cursor:
+        url += "&max_id=" + urllib.parse.quote(cursor)
+    return get(url)            # raises RuntimeError if it can't get past the throttle
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--max", type=int, default=150)
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--imgs", type=int, default=2)
+    ap.add_argument("--budget-min", type=float, default=40.0, help="wall-clock budget")
+    ap.add_argument("--reset", action="store_true", help="ignore saved cursor, start at feed head")
     args = ap.parse_args()
 
     token = ""
@@ -297,61 +301,79 @@ def main():
         token = open(".tmp_secrets").read().splitlines()[1]
     except Exception:
         pass
-
-    print(f"Pulling feed (cap {args.max})...")
-    posts = fetch_feed(args.max)
-    print(f"Collected {len(posts)} posts from feed.\n")
-
-    keep, skipped = [], []
-    for it in posts:
-        name, cat, stock, price, sold = classify(it.get("caption", ""))
-        if not name:
-            skipped.append(it["shortcode"])
-            continue
-        keep.append({
-            "shortcode": it["shortcode"],
-            "name": name,
-            "category": cat,
-            "stock": stock,
-            "price": price,
-            "description": build_desc(name, it.get("caption", ""), stock),
-            "imageUrls": it.get("imageUrls", [])[:args.imgs],
-            "takenAt": it.get("takenAt"),
-        })
-
-    print(f"KEEP {len(keep)}  |  SKIP {len(skipped)} (no name)\n")
-    from collections import Counter
-    print("Category spread:", dict(Counter(k["category"] for k in keep)))
-    print("\nSample (first 25):")
-    for k in keep[:25]:
-        eu = sorted(int(s) for s in k["stock"] if s.isdigit())
-        szs = f"EU{eu[0]}-{eu[-1]}" if eu else (",".join(k["stock"]) or "none")
-        print(f"  {k['shortcode']}  {k['name'][:34]:34}  {k['category']:15} {szs:10} Ksh{k['price']}")
-    print("\nSkipped shortcodes:", " ".join(skipped[:40]))
-
-    if args.dry_run:
-        print("\n[dry-run] nothing committed.")
-        return
-
-    if not token:
+    if not token and not args.dry_run:
         print("ERROR: no admin token found (.tmp_secrets).")
         sys.exit(1)
 
-    print(f"\nCommitting {len(keep)} items via /api/ig-sync in batches of {args.batch}...")
-    total_added, total_err = 0, 0
-    for i in range(0, len(keep), args.batch):
-        batch = keep[i:i + args.batch]
+    cursor, committed_list = ("", []) if args.reset else load_state()
+    committed = set(committed_list)
+    # Seed from what's already in the live catalog so we never re-attempt them.
+    try:
+        bags = get(f"{API}/api/bags").get("bags", [])
+        for b in bags:
+            bid = b.get("id", "")
+            if bid.startswith("ig_"):
+                committed.add(bid[3:])
+    except Exception:
+        pass
+    print(f"Resuming: cursor={'<head>' if not cursor else cursor[:24]+'...'} "
+          f"already-committed={len(committed)}")
+
+    deadline = time.time() + args.budget_min * 60
+    throttle = 90          # grows on repeated throttle
+    page = 0
+    added_total, skipped_total = 0, 0
+
+    while len(committed) < args.max and time.time() < deadline:
         try:
-            r = post_sync(batch, token)
-            total_added += r.get("added", 0)
-            errs = r.get("errors", [])
-            total_err += len(errs)
-            print(f"  batch {i//args.batch+1}: added={r.get('added')} errors={len(errs)}"
-                  + (f" {errs[:2]}" if errs else ""))
-        except Exception as e:
-            print(f"  batch {i//args.batch+1}: EXCEPTION {e}")
-        time.sleep(1.5)
-    print(f"\nDONE. added={total_added} errors={total_err}")
+            d = fetch_one(cursor)
+            throttle = 90  # reset backoff on success
+        except RuntimeError as e:
+            wait = min(throttle, max(10, int(deadline - time.time())))
+            print(f"  throttled ({e}); waiting {wait}s then retrying same cursor")
+            time.sleep(wait)
+            throttle = min(throttle + 60, 300)
+            continue
+
+        page += 1
+        items = d.get("items", [])
+        fresh = [it for it in items if it.get("shortcode") not in committed and it.get("imageUrls")]
+        keepers, skipped = [], 0
+        for it in fresh:
+            mi = make_item(it, args.imgs)
+            if mi:
+                keepers.append(mi)
+            else:
+                skipped += 1
+        skipped_total += skipped
+
+        if keepers and not args.dry_run:
+            try:
+                r = post_sync(keepers, token)
+                for k in keepers:
+                    committed.add(k["shortcode"])
+                added_total += r.get("added", 0)
+                print(f"  page {page}: +{len(keepers)} named (skip {skipped}) "
+                      f"committed +{r.get('added')} errs {len(r.get('errors', []))} "
+                      f"| total {len(committed)} more={d.get('more_available')}")
+            except Exception as e:
+                print(f"  page {page}: commit EXCEPTION {e}")
+        else:
+            for k in keepers:
+                committed.add(k["shortcode"])
+            print(f"  page {page}: +{len(keepers)} named (skip {skipped}) "
+                  f"[dry] total {len(committed)} more={d.get('more_available')}")
+
+        cursor = d.get("next_max_id") or ""
+        if not args.reset:
+            save_state(cursor, committed)
+        if not d.get("more_available") or not cursor:
+            print("  reached end of feed.")
+            break
+        time.sleep(4)
+
+    print(f"\nDONE. committed_total={len(committed)} added_this_run={added_total} "
+          f"skipped_this_run={skipped_total}")
 
 
 if __name__ == "__main__":
