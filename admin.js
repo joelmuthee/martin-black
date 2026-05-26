@@ -52,6 +52,9 @@ async function apiUploadImage(base64, ext) {
   return `${API_BASE}${data.path}`;
 }
 
+// Low-level publish of the current in-memory `bags`. Do NOT call directly for
+// user-triggered writes — go through apiMutateAndPublish so a stale list can't
+// clobber the live catalogue.
 async function apiPublish() {
   const res = await fetch(`${API_BASE}/api/bulk`, {
     method: 'POST',
@@ -59,6 +62,22 @@ async function apiPublish() {
     body: JSON.stringify({ bags, settings }),
   });
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Save failed: ${res.status}`); }
+}
+
+// Every admin write MUST go through this. It refetches live KV, applies the
+// caller's mutation against the FRESH list, then publishes — so a stale admin
+// tab (or a second device/webview) can't silently resurrect deleted items or
+// revert edits by republishing an old list. Mutators MUST look up bags by id
+// INSIDE the callback — anything captured before the refetch is stale. A mutator
+// may throw to abort the save.
+async function apiMutateAndPublish(mutate) {
+  const res = await fetch(`${API_BASE}/api/bags?_=${Date.now()}`);
+  if (!res.ok) throw new Error(`Failed to load fresh data: ${res.status}`);
+  const json = await res.json();
+  bags = Array.isArray(json.bags) ? json.bags : [];
+  settings = json.settings || {};
+  await mutate();
+  await apiPublish();
 }
 
 let accountSuspended = false;
@@ -452,26 +471,28 @@ async function saveItem() {
     }
 
     if (editingId) {
-      const bag = bags.find(b => b.id === editingId);
-      if (!bag) return;
-      bag.name = name;
-      bag.category = category;
-      bag.description = desc;
-      bag.price = price;
-      bag.stock = { ...bag.stock, ...stock };
-      // On edit, additional images = whatever is currently in stagedExtras (which we pre-populated from the bag)
-      bag.images = extraUrls.length ? [imagePath || bag.image, ...extraUrls] : (imagePath ? [imagePath] : (bag.images || []));
-      // Strip the lead since image field stays as the primary
-      if (bag.images.length) bag.images = bag.images.filter((u, i, a) => u && a.indexOf(u) === i);
-      // Remove sizes set to 0 if they are explicitly cleared in the form
+      // Read the form's cleared/zeroed sizes now (DOM), apply to the FRESH bag in the mutator.
+      const clearedSizes = [];
       document.querySelectorAll('.stock-qty').forEach(inp => {
-        const sz = inp.dataset.size;
         const val = parseInt(inp.value, 10);
-        if (!isNaN(val) && val === 0) delete bag.stock[sz];
-        else if (inp.value === '') delete bag.stock[sz];
+        if ((!isNaN(val) && val === 0) || inp.value === '') clearedSizes.push(inp.dataset.size);
       });
-      if (imagePath) bag.image = imagePath;
-      await apiPublish();
+      await apiMutateAndPublish(() => {
+        const bag = bags.find(b => b.id === editingId);
+        if (!bag) throw new Error('Item no longer exists — refresh admin');
+        bag.name = name;
+        bag.category = category;
+        bag.description = desc;
+        bag.price = price;
+        bag.stock = { ...bag.stock, ...stock };
+        // On edit, additional images = whatever is currently in stagedExtras (which we pre-populated from the bag)
+        bag.images = extraUrls.length ? [imagePath || bag.image, ...extraUrls] : (imagePath ? [imagePath] : (bag.images || []));
+        // Strip the lead since image field stays as the primary
+        if (bag.images.length) bag.images = bag.images.filter((u, i, a) => u && a.indexOf(u) === i);
+        // Remove sizes explicitly cleared/zeroed in the form
+        clearedSizes.forEach(sz => { delete bag.stock[sz]; });
+        if (imagePath) bag.image = imagePath;
+      });
       showToast('Item updated and live!');
     } else {
       if (!stagedImage) { showToast('Add an item image.'); setSaving(false); return; }
@@ -479,8 +500,7 @@ async function saveItem() {
       const newBag = { id, name, category, description: desc, price, stock, sales: [], image: imagePath, createdAt: new Date().toISOString() };
       if (extraUrls.length) newBag.images = [imagePath, ...extraUrls];
       if (stagedInstagramUrl) newBag.instagramUrl = stagedInstagramUrl;
-      bags.unshift(newBag);
-      await apiPublish();
+      await apiMutateAndPublish(() => { bags.unshift(newBag); });
       showToast('Item added and live!');
     }
     resetForm();
@@ -553,12 +573,14 @@ function editItem(id) {
 
 async function deleteItem(id) {
   if (!await confirmAction('Delete this item? You can restore it from Trash below.', 'Delete')) return;
-  const idx = bags.findIndex(b => b.id === id);
-  const removed = idx === -1 ? null : bags[idx];
-  bags = bags.filter(b => b.id !== id);
+  let removed = null, removedIdx = -1;
   try {
-    await apiPublish();
-    if (removed) trashPush([{ item: removed, index: idx }]);
+    await apiMutateAndPublish(() => {
+      removedIdx = bags.findIndex(b => b.id === id);
+      removed = removedIdx === -1 ? null : bags[removedIdx];
+      bags = bags.filter(b => b.id !== id);
+    });
+    if (removed) trashPush([{ item: removed, index: removedIdx }]);
     renderList();
     renderTrash();
     renderDashboard();
@@ -610,19 +632,12 @@ function closeSaleModal() { saleModal.style.display = 'none'; pendingSaleId = nu
 
 // withBuyer=false → record the sale and mark sold without capturing any buyer details (no GHL).
 async function recordSale(withBuyer) {
-  const bag = bags.find(b => b.id === pendingSaleId);
-  if (!bag) return;
+  const targetId = pendingSaleId;
+  const curBag = bags.find(b => b.id === targetId);
+  if (!curBag) return;
   const size = saleSizeInput.value;
   const qty = parseInt(saleQtyInput.value, 10) || 1;
-  const salePrice = parseInt(salePriceInput.value, 10) || bag.price;
-
-  // Reduce stock
-  if (bag.stock && bag.stock[size] !== undefined) {
-    bag.stock[size] = Math.max(0, bag.stock[size] - qty);
-  }
-
-  // Record sale
-  if (!bag.sales) bag.sales = [];
+  const salePrice = parseInt(salePriceInput.value, 10) || curBag.price;
   const sale = {
     size,
     qty,
@@ -632,16 +647,25 @@ async function recordSale(withBuyer) {
     notes: withBuyer ? buyerNotes.value.trim() : '',
     soldAt: new Date().toISOString(),
   };
-  bag.sales.push(sale);
-
   closeSaleModal();
   try {
-    await apiPublish();
+    let soldBag = null;
+    await apiMutateAndPublish(() => {
+      const bag = bags.find(b => b.id === targetId);
+      if (!bag) throw new Error('Item no longer exists — refresh admin');
+      // Reduce stock
+      if (bag.stock && bag.stock[size] !== undefined) {
+        bag.stock[size] = Math.max(0, bag.stock[size] - qty);
+      }
+      if (!bag.sales) bag.sales = [];
+      bag.sales.push(sale);
+      soldBag = bag;
+    });
     renderList();
     renderDashboard();
     renderInventory();
     showToast(`Sale recorded — ${qty}× ${size} sold.`);
-    if (withBuyer && (sale.buyerName || sale.buyerPhone)) sendBuyerToGHL(bag, sale);
+    if (withBuyer && (sale.buyerName || sale.buyerPhone)) sendBuyerToGHL(soldBag, sale);
   } catch (err) { showToast('Error: ' + err.message); }
 }
 
@@ -675,16 +699,18 @@ function openRestockModal(id) {
 function closeRestockModal() { restockModal.style.display = 'none'; pendingRestockId = null; }
 
 document.getElementById('restockSaveBtn').addEventListener('click', async () => {
-  const bag = bags.find(b => b.id === pendingRestockId);
-  if (!bag) return;
+  const targetId = pendingRestockId;
   const size = restockSizeInput.value;
   const qty = parseInt(restockQtyInput.value, 10) || 0;
   if (qty <= 0) { showToast('Enter a quantity to add.'); return; }
-  if (!bag.stock) bag.stock = {};
-  bag.stock[size] = (bag.stock[size] || 0) + qty;
   closeRestockModal();
   try {
-    await apiPublish();
+    await apiMutateAndPublish(() => {
+      const bag = bags.find(b => b.id === targetId);
+      if (!bag) throw new Error('Item no longer exists — refresh admin');
+      if (!bag.stock) bag.stock = {};
+      bag.stock[size] = (bag.stock[size] || 0) + qty;
+    });
     renderList();
     renderInventory();
     showToast(`+${qty} ${size} added to stock.`);
@@ -810,17 +836,18 @@ let editingSale = null; // { bagId, soldAt }
 
 async function undoSale(bagId, soldAt) {
   if (!await confirmAction('Undo this sale? The quantity goes back into stock.', 'Undo sale')) return;
-  const bag = bags.find(b => b.id === bagId);
-  if (!bag) return;
-  const idx = (bag.sales || []).findIndex(x => x.soldAt === soldAt);
-  if (idx === -1) return;
-  const s = bag.sales[idx];
-  if (bag.stock && bag.stock[s.size] !== undefined) {
-    bag.stock[s.size] = (Number(bag.stock[s.size]) || 0) + (Number(s.qty) || 1);
-  }
-  bag.sales.splice(idx, 1);
   try {
-    await apiPublish();
+    await apiMutateAndPublish(() => {
+      const bag = bags.find(b => b.id === bagId);
+      if (!bag) throw new Error('Item no longer exists — refresh admin');
+      const idx = (bag.sales || []).findIndex(x => x.soldAt === soldAt);
+      if (idx === -1) throw new Error('Sale not found — refresh admin');
+      const s = bag.sales[idx];
+      if (bag.stock && bag.stock[s.size] !== undefined) {
+        bag.stock[s.size] = (Number(bag.stock[s.size]) || 0) + (Number(s.qty) || 1);
+      }
+      bag.sales.splice(idx, 1);
+    });
     renderList();
     renderDashboard();
     renderInventory();
@@ -848,27 +875,35 @@ function closeEditSale() { document.getElementById('editSaleModal').style.displa
 
 document.getElementById('editSaleSaveBtn').addEventListener('click', async () => {
   if (!editingSale) return;
-  const bag = bags.find(b => b.id === editingSale.bagId);
-  if (!bag) return;
-  const s = (bag.sales || []).find(x => x.soldAt === editingSale.soldAt);
-  if (!s) return;
-  const newSize = document.getElementById('editSaleSize').value.trim() || s.size;
+  const { bagId, soldAt } = editingSale;
+  // Read form values now (DOM); apply against the FRESH sale record in the mutator.
+  const formSize = document.getElementById('editSaleSize').value.trim();
   const newQty = parseInt(document.getElementById('editSaleQty').value, 10) || 1;
-  const newPrice = parseInt(document.getElementById('editSalePrice').value, 10) || bag.price;
-  // Correct stock: put the old quantity back, then take the new quantity out.
-  if (bag.stock) {
-    if (bag.stock[s.size] !== undefined) bag.stock[s.size] = (Number(bag.stock[s.size]) || 0) + (Number(s.qty) || 1);
-    if (bag.stock[newSize] !== undefined) bag.stock[newSize] = Math.max(0, (Number(bag.stock[newSize]) || 0) - newQty);
-  }
-  s.size = newSize;
-  s.qty = newQty;
-  s.salePrice = newPrice;
-  s.buyerName = document.getElementById('editBuyerName').value.trim();
-  s.buyerPhone = document.getElementById('editBuyerPhone').value.trim();
-  s.notes = document.getElementById('editBuyerNotes').value.trim();
+  const formPrice = parseInt(document.getElementById('editSalePrice').value, 10);
+  const newBuyerName = document.getElementById('editBuyerName').value.trim();
+  const newBuyerPhone = document.getElementById('editBuyerPhone').value.trim();
+  const newNotes = document.getElementById('editBuyerNotes').value.trim();
   closeEditSale();
   try {
-    await apiPublish();
+    await apiMutateAndPublish(() => {
+      const bag = bags.find(b => b.id === bagId);
+      if (!bag) throw new Error('Item no longer exists — refresh admin');
+      const s = (bag.sales || []).find(x => x.soldAt === soldAt);
+      if (!s) throw new Error('Sale not found — refresh admin');
+      const newSize = formSize || s.size;
+      const newPrice = isNaN(formPrice) ? (s.salePrice != null ? s.salePrice : bag.price) : formPrice;
+      // Correct stock: put the old quantity back, then take the new quantity out.
+      if (bag.stock) {
+        if (bag.stock[s.size] !== undefined) bag.stock[s.size] = (Number(bag.stock[s.size]) || 0) + (Number(s.qty) || 1);
+        if (bag.stock[newSize] !== undefined) bag.stock[newSize] = Math.max(0, (Number(bag.stock[newSize]) || 0) - newQty);
+      }
+      s.size = newSize;
+      s.qty = newQty;
+      s.salePrice = newPrice;
+      s.buyerName = newBuyerName;
+      s.buyerPhone = newBuyerPhone;
+      s.notes = newNotes;
+    });
     renderList();
     renderDashboard();
     renderInventory();
@@ -1062,12 +1097,15 @@ function bulkSelectAll() {
 
 async function bulkDelete() {
   if (!await confirmAction(`Delete ${bulkSelected.size} item(s)? You can restore them from Trash below.`, 'Delete')) return;
-  const removed = [];
-  bags.forEach((b, i) => { if (bulkSelected.has(b.id)) removed.push({ item: b, index: i }); });
-  bags = bags.filter(b => !bulkSelected.has(b.id));
+  const ids = new Set(bulkSelected);
   bulkSelected.clear();
+  let removed = [];
   try {
-    await apiPublish();
+    await apiMutateAndPublish(() => {
+      removed = [];
+      bags.forEach((b, i) => { if (ids.has(b.id)) removed.push({ item: b, index: i }); });
+      bags = bags.filter(b => !ids.has(b.id));
+    });
     trashPush(removed);
     renderList();
     renderTrash();
@@ -1082,10 +1120,12 @@ async function bulkDelete() {
 async function bulkSetCategory() {
   const cat = await chooseCategory();
   if (!cat) return;
-  const n = bulkSelected.size;
-  bags.forEach(b => { if (bulkSelected.has(b.id)) b.category = cat; });
+  const ids = new Set(bulkSelected);
+  const n = ids.size;
   try {
-    await apiPublish();
+    await apiMutateAndPublish(() => {
+      bags.forEach(b => { if (ids.has(b.id)) b.category = cat; });
+    });
     bulkSelected.clear();
     renderList();
     renderInventory();
@@ -1154,24 +1194,21 @@ async function restoreItem(id) {
   const trash = getTrash();
   const idx = trash.findIndex(t => t.item && t.item.id === id);
   if (idx === -1) return;
-  if (bags.some(b => b.id === id)) {
-    trash.splice(idx, 1); setTrash(trash); renderTrash();
-    showToast('Already in the catalog — cleared from Trash.');
-    return;
-  }
   const entry = trash[idx];
-  const at = Math.min(typeof entry.index === 'number' ? entry.index : bags.length, bags.length);
-  bags.splice(at, 0, entry.item);
+  let alreadyThere = false;
   try {
-    await apiPublish();
+    await apiMutateAndPublish(() => {
+      if (bags.some(b => b.id === id)) { alreadyThere = true; return; }
+      const at = Math.min(typeof entry.index === 'number' ? entry.index : bags.length, bags.length);
+      bags.splice(at, 0, entry.item);
+    });
     trash.splice(idx, 1); setTrash(trash);
     renderList();
     renderTrash();
     renderInventory();
     renderDashboard();
-    showToast('Item restored to the catalog.');
+    showToast(alreadyThere ? 'Already in the catalog — cleared from Trash.' : 'Item restored to the catalog.');
   } catch (err) {
-    bags = bags.filter(b => b.id !== id); // roll back local change
     showToast('Restore failed: ' + err.message);
   }
 }
