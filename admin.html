@@ -374,6 +374,44 @@
   </div>
 </div>
 
+<!-- EDIT SALE MODAL -->
+<div id="editSaleModal" class="modal" style="display:none;">
+  <div class="modal-card">
+    <h3 id="editSaleTitle">Edit sale</h3>
+    <p class="sub">Correct a recorded sale. Stock is adjusted to match.</p>
+    <div class="field-row">
+      <div class="field">
+        <label>Size</label>
+        <input id="editSaleSize" type="text">
+      </div>
+      <div class="field">
+        <label>Quantity</label>
+        <input id="editSaleQty" type="number" min="1" value="1">
+      </div>
+    </div>
+    <div class="field">
+      <label>Sale price (Ksh)</label>
+      <input id="editSalePrice" type="number" min="0" step="50">
+    </div>
+    <div class="field">
+      <label>Buyer name <small style="font-weight:400;color:#999;">optional</small></label>
+      <input id="editBuyerName" type="text">
+    </div>
+    <div class="field">
+      <label>Buyer phone <small style="font-weight:400;color:#999;">optional</small></label>
+      <input id="editBuyerPhone" type="tel">
+    </div>
+    <div class="field">
+      <label>Notes <small style="font-weight:400;color:#999;">optional</small></label>
+      <input id="editBuyerNotes" type="text">
+    </div>
+    <div class="admin-actions" style="margin-top:18px;">
+      <button class="btn-admin gold" id="editSaleSaveBtn">Save changes</button>
+      <button class="btn-admin danger" id="editSaleCancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- RESTOCK MODAL -->
 <div id="restockModal" class="modal" style="display:none;">
   <div class="modal-card">
@@ -426,6 +464,6 @@
   </div>
 </div>
 
-<script src="admin.js?v=22"></script>
+<script src="admin.js?v=23"></script>
 </body>
 </html>

@@ -61,11 +61,27 @@ async function apiPublish() {
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Save failed: ${res.status}`); }
 }
 
+let accountSuspended = false;
 async function loadData() {
   const res = await fetch(`${API_BASE}/api/bags?_=${Date.now()}`);
   const json = await res.json();
   bags = json.bags || [];
   settings = json.settings || {};
+  accountSuspended = !!json.suspended;
+}
+
+// Owner-facing notice when billing has suspended the store. The public site is
+// dark; this tells the owner why and how to restore (they can't unflip it).
+function renderSuspendedBanner() {
+  let b = document.getElementById('suspendedBanner');
+  if (!accountSuspended) { if (b) b.remove(); return; }
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'suspendedBanner';
+    b.style.cssText = 'position:sticky;top:0;z-index:9000;background:#b00020;color:#fff;padding:12px 16px;text-align:center;font-size:14px;font-weight:600;line-height:1.4;';
+    document.body.prepend(b);
+  }
+  b.innerHTML = 'Your store is currently offline because payment is overdue. Please contact Essence Automations to restore it. <a href="https://wa.me/254720615606" style="color:#fff;text-decoration:underline;">Message us</a>';
 }
 
 // ====== HELPERS ======
@@ -775,13 +791,92 @@ function renderDashboard() {
     ? recent.map(({ bag, s }) => `
         <div class="recent-row">
           <img src="${bag.image}" alt="${escapeHtml(bag.name)}">
-          <div>
+          <div style="flex:1;min-width:0;">
             <div class="recent-name">${escapeHtml(bag.name)} · ${escapeHtml(s.size || '')} × ${s.qty || 1}</div>
             <div class="recent-meta">${fmtKsh(s.salePrice || bag.price)} · ${s.buyerName ? escapeHtml(s.buyerName) : 'No buyer saved'} · ${relTime(s.soldAt)}</div>
+          </div>
+          <div class="recent-actions" style="display:flex;gap:6px;flex-shrink:0;">
+            <button class="btn-admin" style="padding:5px 11px;font-size:12px;" onclick="openEditSale('${bag.id}','${s.soldAt}')">Edit</button>
+            <button class="btn-admin danger" style="padding:5px 11px;font-size:12px;" onclick="undoSale('${bag.id}','${s.soldAt}')">Undo</button>
           </div>
         </div>`).join('')
     : '<p style="color:#999;font-size:13px;">No sales recorded yet.</p>';
 }
+
+// ====== EDIT / UNDO RECORDED SALES ======
+// Recent sales are editable: undo (restock + delete the record) or correct the
+// size/qty/price/buyer. Mirrors the fleet standard "Recent sales must be editable".
+let editingSale = null; // { bagId, soldAt }
+
+async function undoSale(bagId, soldAt) {
+  if (!await confirmAction('Undo this sale? The quantity goes back into stock.', 'Undo sale')) return;
+  const bag = bags.find(b => b.id === bagId);
+  if (!bag) return;
+  const idx = (bag.sales || []).findIndex(x => x.soldAt === soldAt);
+  if (idx === -1) return;
+  const s = bag.sales[idx];
+  if (bag.stock && bag.stock[s.size] !== undefined) {
+    bag.stock[s.size] = (Number(bag.stock[s.size]) || 0) + (Number(s.qty) || 1);
+  }
+  bag.sales.splice(idx, 1);
+  try {
+    await apiPublish();
+    renderList();
+    renderDashboard();
+    renderInventory();
+    showToast('Sale undone, stock restored.');
+  } catch (err) { showToast('Error: ' + err.message); }
+}
+
+function openEditSale(bagId, soldAt) {
+  const bag = bags.find(b => b.id === bagId);
+  if (!bag) return;
+  const s = (bag.sales || []).find(x => x.soldAt === soldAt);
+  if (!s) return;
+  editingSale = { bagId, soldAt };
+  document.getElementById('editSaleTitle').textContent = `Edit sale: ${bag.name}`;
+  document.getElementById('editSaleSize').value = s.size || '';
+  document.getElementById('editSaleQty').value = s.qty || 1;
+  document.getElementById('editSalePrice').value = (s.salePrice != null ? s.salePrice : bag.price) || 0;
+  document.getElementById('editBuyerName').value = s.buyerName || '';
+  document.getElementById('editBuyerPhone').value = s.buyerPhone || '';
+  document.getElementById('editBuyerNotes').value = s.notes || '';
+  document.getElementById('editSaleModal').style.display = 'flex';
+}
+
+function closeEditSale() { document.getElementById('editSaleModal').style.display = 'none'; editingSale = null; }
+
+document.getElementById('editSaleSaveBtn').addEventListener('click', async () => {
+  if (!editingSale) return;
+  const bag = bags.find(b => b.id === editingSale.bagId);
+  if (!bag) return;
+  const s = (bag.sales || []).find(x => x.soldAt === editingSale.soldAt);
+  if (!s) return;
+  const newSize = document.getElementById('editSaleSize').value.trim() || s.size;
+  const newQty = parseInt(document.getElementById('editSaleQty').value, 10) || 1;
+  const newPrice = parseInt(document.getElementById('editSalePrice').value, 10) || bag.price;
+  // Correct stock: put the old quantity back, then take the new quantity out.
+  if (bag.stock) {
+    if (bag.stock[s.size] !== undefined) bag.stock[s.size] = (Number(bag.stock[s.size]) || 0) + (Number(s.qty) || 1);
+    if (bag.stock[newSize] !== undefined) bag.stock[newSize] = Math.max(0, (Number(bag.stock[newSize]) || 0) - newQty);
+  }
+  s.size = newSize;
+  s.qty = newQty;
+  s.salePrice = newPrice;
+  s.buyerName = document.getElementById('editBuyerName').value.trim();
+  s.buyerPhone = document.getElementById('editBuyerPhone').value.trim();
+  s.notes = document.getElementById('editBuyerNotes').value.trim();
+  closeEditSale();
+  try {
+    await apiPublish();
+    renderList();
+    renderDashboard();
+    renderInventory();
+    showToast('Sale updated.');
+  } catch (err) { showToast('Error: ' + err.message); }
+});
+document.getElementById('editSaleCancelBtn').addEventListener('click', closeEditSale);
+document.getElementById('editSaleModal').addEventListener('click', e => { if (e.target.id === 'editSaleModal') closeEditSale(); });
 
 // ====== INVENTORY ======
 // State for the inventory table view
@@ -1482,6 +1577,7 @@ async function commitIgSync() {
 async function init() {
   showToast('Loading…');
   await loadData();
+  renderSuspendedBanner();
   renderList();
   renderTrash();
   renderDashboard();

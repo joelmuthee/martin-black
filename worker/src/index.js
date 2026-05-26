@@ -18,7 +18,15 @@ const json = (data, status = 200, extra = {}) =>
 const isAuthed = (req, env) => {
   const auth = req.headers.get("Authorization") || "";
   if (!auth.startsWith("Bearer ")) return false;
-  return env.ADMIN_TOKEN && auth.slice(7).trim() === env.ADMIN_TOKEN;
+  return env.ADMIN_TOKEN && auth.slice(7).trim() === env.ADMIN_TOKEN.trim();
+};
+
+// Master token = billing/agency only. Controls the suspend flag. The shop's
+// ADMIN_TOKEN can NOT flip suspend, so the owner can't reactivate themselves.
+const isMaster = (req, env) => {
+  const auth = req.headers.get("Authorization") || "";
+  if (!auth.startsWith("Bearer ")) return false;
+  return env.MASTER_TOKEN && auth.slice(7).trim() === env.MASTER_TOKEN.trim();
 };
 
 const b64ToBytes = b64 => {
@@ -531,7 +539,20 @@ export default {
     if (request.method === "GET" && path === "/api/bags") {
       const raw = await env.BAGS.get("data");
       const data = raw ? JSON.parse(raw) : { bags: [], settings: {} };
+      // Billing kill-switch: separate KV key so the owner's Publish can't clear it.
+      data.suspended = (await env.BAGS.get("suspended")) === "1";
       return json(data, 200, { "Cache-Control": "public, max-age=10" });
+    }
+
+    // Billing only: flip the suspend flag. Authed by MASTER_TOKEN (not the shop
+    // admin token), so the owner can't reactivate themselves.
+    if (request.method === "POST" && path === "/api/suspend") {
+      if (!isMaster(request, env)) return json({ error: "unauthorized" }, 401);
+      let body;
+      try { body = await request.json(); } catch { return json({ error: "invalid json" }, 400); }
+      const suspended = !!body.suspended;
+      await env.BAGS.put("suspended", suspended ? "1" : "0");
+      return json({ ok: true, suspended });
     }
 
     // Public: serve images

@@ -5,6 +5,7 @@
 node_modules/
 worker/node_modules/
 worker/.wrangler/
+worker/.master-token
 .claude/
 .firecrawl/
 .playwright-mcp/
