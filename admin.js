@@ -199,19 +199,41 @@ function totalRevenue(item) {
 }
 
 // ====== IMAGES ======
+// Downscale + re-encode every picked/downloaded image to a compact JPEG before
+// upload. WhatsApp link previews silently skip heavy images (a 2.3MB PNG won't
+// render in the Enquire share card), so normalising covers to JPEG ~q82 at
+// <=1280px keeps the preview working and the catalogue fast. Transparency is
+// flattened onto white. All staged images become ext 'jpg'.
+function blobToStagedJpeg(blob, maxDim = 1280, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (Math.max(w, h) > maxDim) { const s = maxDim / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', quality);
+      resolve({ base64: dataUrl.split(',')[1], ext: 'jpg', dataUrl });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not load image')); };
+    img.src = url;
+  });
+}
+
 const imageInput = document.getElementById('imageInput');
 const imagePreview = document.getElementById('imagePreview');
-imageInput.addEventListener('change', e => {
+imageInput.addEventListener('change', async e => {
   const file = e.target.files[0];
   if (!file) return;
-  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-  const reader = new FileReader();
-  reader.onload = () => {
-    const dataUrl = reader.result;
-    stagedImage = { base64: dataUrl.split(',')[1], ext, dataUrl };
-    imagePreview.innerHTML = `<img src="${dataUrl}" style="max-width:180px;border-radius:8px;margin-top:4px;">`;
-  };
-  reader.readAsDataURL(file);
+  try {
+    stagedImage = await blobToStagedJpeg(file);
+    imagePreview.innerHTML = `<img src="${stagedImage.dataUrl}" style="max-width:180px;border-radius:8px;margin-top:4px;">`;
+  } catch (_) { showToast('Could not read that image. Try another file.'); }
 });
 
 // Additional images: array of { base64, ext, dataUrl } OR { url } (already-uploaded)
@@ -219,18 +241,7 @@ let stagedExtras = [];
 const extraImagesInput = document.getElementById('extraImagesInput');
 const extraImagesPreview = document.getElementById('extraImagesPreview');
 
-function readFileAsStaged(file) {
-  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result;
-      resolve({ base64: dataUrl.split(',')[1], ext, dataUrl });
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
+function readFileAsStaged(file) { return blobToStagedJpeg(file); }
 
 extraImagesInput?.addEventListener('change', async e => {
   const files = [...e.target.files];
@@ -287,16 +298,7 @@ document.getElementById('igQuickBtn')?.addEventListener('click', async () => {
       const proxied = `${API_BASE}/api/ig-proxy?url=${encodeURIComponent(imgUrl)}`;
       const r = await fetch(proxied);
       if (!r.ok) throw new Error('Image download failed');
-      const blob = await r.blob();
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const dataUrl = reader.result;
-          resolve({ base64: dataUrl.split(',')[1], ext: 'jpg', dataUrl });
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
+      return blobToStagedJpeg(await r.blob());
     }
 
     stagedImage = await downloadAndStage(data.imageUrl);
