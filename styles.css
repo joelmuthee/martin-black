@@ -327,6 +327,14 @@ img { max-width: 100%; display: block; }
 .broadcast-recipient-phone { grid-column: 3; font-size: 11px; color: var(--ink-faint); font-family: monospace; align-self: start; }
 .broadcast-recipient-meta { grid-column: 2 / -1; font-size: 11px; color: var(--ink-faint); }
 @media (max-width: 600px) { .broadcast-recipients { grid-template-columns: 1fr; } }
+/* Mobile broadcast stepper — step through buyers one at a time on a phone. */
+.broadcast-stepper { background: var(--surface); border: 1px solid var(--gold); border-radius: 10px; padding: 14px 16px; }
+.bc-step-head { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; }
+.bc-step-name { font-size: 16px; font-weight: 600; color: var(--ink); margin: 4px 0 12px; }
+.bc-step-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.bc-step-actions .btn-admin { text-decoration: none; }
+.bc-step-hint { font-size: 12px; color: var(--ink-faint); margin-top: 10px; line-height: 1.45; }
+.bc-step-done { font-size: 14px; font-weight: 600; color: #1a7a40; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
 /* Search-gap pills (Insights → searches with no results) */
 .search-gap-pill {

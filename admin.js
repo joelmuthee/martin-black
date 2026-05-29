@@ -1461,9 +1461,65 @@ document.getElementById('broadcastCopyBtn')?.addEventListener('click', () => {
   showToast('Message copied — paste it into your WhatsApp broadcast.');
 });
 
+// On phones the multi-window approach fails: only the first wa.me link fires before
+// the browser is backgrounded by the WhatsApp app, and you can only be in one chat
+// at a time. So mobile gets a one-at-a-time stepper; desktop keeps the multi-tab open.
+const BC_PROG_KEY = 'martinblack_bcprog';
+let bcQueue = [];   // [{ phone, name }]
+let bcIdx = 0;
+function saveBcProgress() { try { localStorage.setItem(BC_PROG_KEY, JSON.stringify({ q: bcQueue, i: bcIdx })); } catch (_) {} }
+function clearBcProgress() { try { localStorage.removeItem(BC_PROG_KEY); } catch (_) {} bcQueue = []; bcIdx = 0; }
+
+function renderBroadcastStepper() {
+  const el = document.getElementById('broadcastStepper');
+  if (!el) return;
+  if (!bcQueue.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  if (bcIdx >= bcQueue.length) {
+    el.style.display = 'block';
+    el.innerHTML = `<div class="bc-step-done">✓ Done — stepped through all ${bcQueue.length} buyer${bcQueue.length === 1 ? '' : 's'}. <button class="btn-admin" id="bcStepClose" type="button">Close</button></div>`;
+    document.getElementById('bcStepClose').addEventListener('click', () => { clearBcProgress(); renderBroadcastStepper(); });
+    return;
+  }
+  const r = bcQueue[bcIdx];
+  const href = `https://wa.me/${r.phone}?text=${encodeURIComponent(buildBroadcastMessage(r.name))}`;
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div class="bc-step-head">Sending ${bcIdx + 1} of ${bcQueue.length}</div>
+    <div class="bc-step-name">${escapeHtml(r.name || 'Unknown buyer')} · +${escapeHtml(r.phone)}</div>
+    <div class="bc-step-actions">
+      <a class="btn-admin gold" id="bcStepOpen" href="${href}" target="_blank" rel="noopener">Open WhatsApp &amp; send →</a>
+      <button class="btn-admin" id="bcStepNext" type="button">Sent ✓ · Next ▸</button>
+      <button class="btn-admin" id="bcStepSkip" type="button">Skip</button>
+      <button class="btn-admin danger" id="bcStepStop" type="button">Stop</button>
+    </div>
+    <div class="bc-step-hint">Tap <strong>Open WhatsApp</strong>, press send inside WhatsApp, come back here and tap <strong>Sent ✓ · Next</strong>. Your place is saved if you get interrupted.</div>`;
+  document.getElementById('bcStepNext').addEventListener('click', () => { bcIdx++; saveBcProgress(); renderBroadcastStepper(); });
+  document.getElementById('bcStepSkip').addEventListener('click', () => { bcIdx++; saveBcProgress(); renderBroadcastStepper(); });
+  document.getElementById('bcStepStop').addEventListener('click', () => { clearBcProgress(); renderBroadcastStepper(); showToast('Sending stopped.'); });
+}
+
+function restoreBcProgress() {
+  try {
+    const p = JSON.parse(localStorage.getItem(BC_PROG_KEY) || 'null');
+    if (p && Array.isArray(p.q) && p.q.length && p.i < p.q.length) { bcQueue = p.q; bcIdx = p.i; renderBroadcastStepper(); }
+    else clearBcProgress();
+  } catch (_) {}
+}
+
+const BC_IS_MOBILE = matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
 document.getElementById('broadcastStartBtn')?.addEventListener('click', async () => {
   const recipients = pastBuyers().filter(b => buyerMatchesFilter(b) && broadcastRecipientsState[b.phone]?.included);
   if (!recipients.length) { showToast('Pick at least one recipient.'); return; }
+  if (BC_IS_MOBILE) {
+    if (!await confirmAction(`Send to ${recipients.length} buyer${recipients.length === 1 ? '' : 's'}, one at a time. For each: tap Open WhatsApp, send, come back, tap Next. OK?`, 'Start')) return;
+    bcQueue = recipients.map(r => ({ phone: r.phone, name: r.name }));
+    bcIdx = 0;
+    saveBcProgress();
+    renderBroadcastStepper();
+    document.getElementById('broadcastStepper').scrollIntoView({ behavior: 'auto', block: 'center' });
+    return;
+  }
   if (!await confirmAction(`Open ${recipients.length} WhatsApp window${recipients.length === 1 ? '' : 's'}, one per buyer. Send each one manually. OK?`)) return;
   let i = 0;
   function next() {
@@ -1475,11 +1531,11 @@ document.getElementById('broadcastStartBtn')?.addEventListener('click', async ()
     const msg = buildBroadcastMessage(r.name);
     window.open(`https://wa.me/${r.phone}?text=${encodeURIComponent(msg)}`, '_blank');
     document.getElementById('broadcastStatus').textContent = `Opening ${i} of ${recipients.length}…`;
-    // Throttle so browser doesn't block popups
     setTimeout(next, 700);
   }
   next();
 });
+restoreBcProgress();
 
 // ====== INSIGHTS (per-browser localStorage from the public site) ======
 const INSIGHTS_KEY = 'martinblack_analytics';
