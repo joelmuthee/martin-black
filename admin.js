@@ -1249,22 +1249,77 @@ let broadcastSelectedIds = [];
 let broadcastRecipientsState = {};  // phone -> { name, included }
 
 function pastBuyers() {
-  // Pull unique past buyers from sales history across all items
+  // Unique past buyers from sales history, carrying the (category, size) pairs each
+  // one bought so the broadcast can be segmented (e.g. everyone who bought Jeans, or
+  // size 34). Keeps the most-recent buyer name + last item for display.
   const map = new Map();
   for (const bag of bags) {
     for (const s of (bag.sales || [])) {
       if (!s.buyerPhone) continue;
       const phone = String(s.buyerPhone).replace(/[^0-9]/g, '');
       if (phone.length < 9) continue;
-      const existing = map.get(phone);
       const soldAt = new Date(s.soldAt || 0).getTime();
-      if (!existing || soldAt > existing.soldAt) {
-        map.set(phone, { phone, name: s.buyerName || '', soldAt, lastBought: bag.name });
-      }
+      let e = map.get(phone);
+      if (!e) { e = { phone, name: '', soldAt: -1, lastBought: '', buys: [] }; map.set(phone, e); }
+      e.buys.push({ cat: bag.category || '', size: s.size || '' });
+      if (soldAt >= e.soldAt) { e.soldAt = soldAt; e.lastBought = bag.name; if (s.buyerName) e.name = s.buyerName; }
+      else if (!e.name && s.buyerName) e.name = s.buyerName;
     }
   }
   return [...map.values()].sort((a, b) => b.soldAt - a.soldAt);
 }
+
+// ===== Broadcast segmentation: filter recipients by category + size =====
+let broadcastFilterCat = 'all';
+let broadcastFilterSize = 'all';
+
+function broadcastSortSizes(arr) {
+  return arr.sort((a, b) => {
+    const na = parseFloat(a), nb = parseFloat(b);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    if (!isNaN(na)) return -1;
+    if (!isNaN(nb)) return 1;
+    return String(a).localeCompare(String(b));
+  });
+}
+function buyerMatchesFilter(b) {
+  return (b.buys || []).some(x =>
+    (broadcastFilterCat === 'all' || x.cat === broadcastFilterCat) &&
+    (broadcastFilterSize === 'all' || x.size === broadcastFilterSize));
+}
+function soldCategories() {
+  const set = new Set();
+  bags.forEach(b => { if (b.category && (b.sales || []).length) set.add(b.category); });
+  return [...set].sort();
+}
+function soldSizes(cat) {
+  const set = new Set();
+  bags.forEach(b => { if (cat !== 'all' && b.category !== cat) return; (b.sales || []).forEach(s => { if (s.size) set.add(s.size); }); });
+  return broadcastSortSizes([...set]);
+}
+function populateBroadcastFilters() {
+  const catSel = document.getElementById('broadcastFilterCat');
+  const sizeSel = document.getElementById('broadcastFilterSize');
+  if (!catSel || !sizeSel) return;
+  const cats = soldCategories();
+  if (broadcastFilterCat !== 'all' && !cats.includes(broadcastFilterCat)) broadcastFilterCat = 'all';
+  catSel.innerHTML = `<option value="all">Any category</option>` + cats.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  catSel.value = broadcastFilterCat;
+  const sizes = soldSizes(broadcastFilterCat);
+  if (broadcastFilterSize !== 'all' && !sizes.includes(broadcastFilterSize)) broadcastFilterSize = 'all';
+  sizeSel.innerHTML = `<option value="all">Any size</option>` + sizes.map(s => `<option value="${escapeHtml(s)}">size ${escapeHtml(s)}</option>`).join('');
+  sizeSel.value = broadcastFilterSize;
+}
+document.getElementById('broadcastFilterCat')?.addEventListener('change', e => {
+  broadcastFilterCat = e.target.value;
+  broadcastFilterSize = 'all'; // sizes are category-specific — reset when category changes
+  populateBroadcastFilters();
+  renderBroadcastRecipients();
+});
+document.getElementById('broadcastFilterSize')?.addEventListener('change', e => {
+  broadcastFilterSize = e.target.value;
+  renderBroadcastRecipients();
+});
 
 function renderBroadcastSelected() {
   const wrap = document.getElementById('broadcastSelectedItems');
@@ -1316,15 +1371,28 @@ function renderBroadcastPicker() {
 function renderBroadcastRecipients() {
   const wrap = document.getElementById('broadcastRecipients');
   if (!wrap) return;
-  const buyers = pastBuyers();
-  // Initialize state for new buyers
-  for (const b of buyers) {
+  populateBroadcastFilters();
+  const all = pastBuyers();
+  // Initialize state for new buyers (manual deselects persist across filter changes)
+  for (const b of all) {
     if (!(b.phone in broadcastRecipientsState)) {
       broadcastRecipientsState[b.phone] = { name: b.name, included: true };
     }
   }
-  if (!buyers.length) {
+  const buyers = all.filter(buyerMatchesFilter);
+  const matchEl = document.getElementById('broadcastFilterMatch');
+  if (matchEl) {
+    const seg = (broadcastFilterCat === 'all' && broadcastFilterSize === 'all')
+      ? 'all buyers'
+      : [broadcastFilterCat === 'all' ? null : broadcastFilterCat, broadcastFilterSize === 'all' ? null : 'size ' + broadcastFilterSize].filter(Boolean).join(' · ');
+    matchEl.textContent = `${buyers.length} ${buyers.length === 1 ? 'buyer' : 'buyers'}${seg === 'all buyers' ? '' : ' · ' + seg}`;
+  }
+  if (!all.length) {
     wrap.innerHTML = '<p style="color:var(--ink-faint);font-size:13px;padding:8px 0;">No past buyers yet — once you record sales with buyer phones, they\'ll show up here.</p>';
+    return;
+  }
+  if (!buyers.length) {
+    wrap.innerHTML = '<p style="color:var(--ink-faint);font-size:13px;padding:8px 0;">No past buyers match this segment. Widen the category or size above.</p>';
     return;
   }
   wrap.innerHTML = `
@@ -1394,7 +1462,7 @@ document.getElementById('broadcastCopyBtn')?.addEventListener('click', () => {
 });
 
 document.getElementById('broadcastStartBtn')?.addEventListener('click', async () => {
-  const recipients = pastBuyers().filter(b => broadcastRecipientsState[b.phone]?.included);
+  const recipients = pastBuyers().filter(b => buyerMatchesFilter(b) && broadcastRecipientsState[b.phone]?.included);
   if (!recipients.length) { showToast('Pick at least one recipient.'); return; }
   if (!await confirmAction(`Open ${recipients.length} WhatsApp window${recipients.length === 1 ? '' : 's'}, one per buyer. Send each one manually. OK?`)) return;
   let i = 0;
