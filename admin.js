@@ -1558,8 +1558,17 @@ const INSIGHTS_KEY = 'martinblack_analytics';
 function loadInsights() {
   try { return JSON.parse(localStorage.getItem(INSIGHTS_KEY) || '{}'); } catch { return {}; }
 }
-function renderInsights() {
-  const stats = loadInsights();
+// Pull the shop-wide aggregate from the worker. Falls back to this device's
+// localStorage only if the worker is unreachable (offline / down).
+async function fetchInsights() {
+  try {
+    const res = await fetch(`${API_BASE}/api/insights`, { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } });
+    if (res.ok) return await res.json();
+  } catch (_) {}
+  return null;
+}
+async function renderInsights() {
+  const stats = (await fetchInsights()) || loadInsights();
   const grid = document.getElementById('insightsKpiGrid');
   if (!grid) return;
 
@@ -1606,10 +1615,13 @@ function renderInsights() {
 }
 
 document.getElementById('insightsResetBtn')?.addEventListener('click', async () => {
-  if (!await confirmAction('Reset all insights on this device? This only affects this browser.')) return;
+  if (!await confirmAction('Reset Insights for the whole shop? This clears the site-wide totals from every device and cannot be undone.', 'Reset')) return;
+  try {
+    await fetch(`${API_BASE}/api/insights-reset`, { method: 'POST', headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } });
+  } catch (_) {}
   localStorage.removeItem(INSIGHTS_KEY);
-  renderInsights();
-  showToast('Insights reset on this device.');
+  await renderInsights();
+  showToast('Insights reset for the whole shop.');
 });
 
 // Admin item search — debounced

@@ -49,6 +49,19 @@ const API_BASE = 'https://martin-black-api.stawisystems.workers.dev';
       data._lastUpdated = new Date().toISOString();
       localStorage.setItem(ANALYTICS_KEY, JSON.stringify(data));
     } catch (_) {}
+    // Also report to the worker so the admin sees site-wide totals across all
+    // visitors and devices, not just this browser. Fire-and-forget; never
+    // blocks or errors the UI. text/plain keeps sendBeacon CORS-preflight-free
+    // (the worker parses the body as JSON regardless of content-type).
+    try {
+      const payload = JSON.stringify({ metric, key });
+      const blob = new Blob([payload], { type: 'text/plain' });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(`${API_BASE}/api/track`, blob);
+      } else {
+        fetch(`${API_BASE}/api/track`, { method: 'POST', body: payload, keepalive: true }).catch(() => {});
+      }
+    } catch (_) {}
   }
 
   function saveWishlist() {
