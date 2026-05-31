@@ -765,6 +765,20 @@ function relTime(iso) {
   return new Date(iso).toLocaleDateString('en-KE', { day: 'numeric', month: 'short' });
 }
 
+// Best-effort "added to the website" timestamp: explicit createdAt, else the IG
+// post date (takenAt; epoch-seconds or ISO), else the millis baked into a manual id.
+// Returns an ISO string, or null if nothing usable.
+function itemAddedAt(bag) {
+  if (bag.createdAt) return bag.createdAt;
+  if (bag.takenAt != null) {
+    const t = bag.takenAt;
+    if (typeof t === 'number') return new Date(t < 1e12 ? t * 1000 : t).toISOString();
+    return t;
+  }
+  const m = String(bag.id || '').match(/_(\d{10,})/);
+  return m ? new Date(parseInt(m[1], 10)).toISOString() : null;
+}
+
 function renderDashboard() {
   const now = new Date();
   const buckets = [
@@ -1050,6 +1064,7 @@ function renderList() {
     const sold = totalUnitsSold(bag);
     const stockSummary = Object.entries(bag.stock || {}).map(([sz, q]) => `${sz}:${q}`).join(' · ') || 'No stock set';
     const checked = bulkSelected.has(bag.id);
+    const addedIso = itemAddedAt(bag);
     return `
     <div class="admin-card ${checked ? 'bulk-selected' : ''}">
       <label class="bulk-check" title="Select for bulk actions">
@@ -1061,6 +1076,7 @@ function renderList() {
         ${bag.category ? `<div class="admin-card-cat-row" style="margin:3px 0;"><span style="background:#f0ede8;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600;">${escapeHtml(bag.category)}</span></div>` : ''}
         <div class="admin-card-price">${fmtKsh(bag.price)}<span class="admin-card-mobile-stock"> · ${units} in stock</span></div>
         <div class="admin-card-stock">${units} in stock · ${sold} sold | ${stockSummary}</div>
+        ${addedIso ? `<div class="admin-card-added" title="Added ${new Date(addedIso).toLocaleString('en-KE')}">Added ${relTime(addedIso)}</div>` : ''}
         <div class="admin-card-actions">
           <button onclick="editItem('${bag.id}')">Edit</button>
           <button onclick="openSaleModal('${bag.id}')" style="background:#f0faf4;border-color:#b0d8c0;color:#1a7a40;">Sell</button>
