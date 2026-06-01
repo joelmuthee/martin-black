@@ -1260,6 +1260,103 @@ window.restoreItem = restoreItem;
 window.deleteForever = deleteForever;
 window.emptyTrash = emptyTrash;
 
+// ====== CLIENTS (free CRM roster) ======
+// Who has bought, with what they bought, total spend, and one-tap WhatsApp.
+// New-stock model: buyers live in each bag's sales[] (deduped by phone).
+let clientsQuery = '';
+let clientsSort = 'recent';
+function clientsLedger() {
+  const map = new Map();
+  for (const bag of bags) {
+    for (const s of (bag.sales || [])) {
+      if (!s || !s.buyerPhone) continue;
+      const phone = String(s.buyerPhone).replace(/[^0-9]/g, '');
+      if (phone.length < 9) continue;
+      const at = new Date(s.soldAt || 0).getTime();
+      const amount = Number(s.salePrice || bag.price || 0) * (Number(s.qty) || 1);
+      let c = map.get(phone);
+      if (!c) { c = { phone, name: '', purchases: [], spend: 0, lastAt: 0 }; map.set(phone, c); }
+      c.purchases.push({ bagName: bag.name, size: s.size || '', qty: Number(s.qty) || 1, amount, at: s.soldAt });
+      c.spend += amount;
+      if (at >= c.lastAt) { c.lastAt = at; if (s.buyerName) c.name = s.buyerName; }
+      else if (!c.name && s.buyerName) c.name = s.buyerName;
+    }
+  }
+  return [...map.values()];
+}
+function clientWaPhone(p) {
+  let d = String(p).replace(/[^0-9]/g, '');
+  if (d.startsWith('0')) d = '254' + d.slice(1);
+  else if (d.length === 9) d = '254' + d;
+  return d;
+}
+function renderClients() {
+  const listEl = document.getElementById('clientsList');
+  if (!listEl) return;
+  const ledger = clientsLedger();
+  const totalSpend = ledger.reduce((s, c) => s + c.spend, 0);
+  const repeat = ledger.filter(c => c.purchases.length >= 2).length;
+  const avg = ledger.length ? Math.round(totalSpend / ledger.length) : 0;
+
+  const nav = document.getElementById('navClientsCount'); if (nav) nav.textContent = ledger.length || '';
+
+  const kpi = document.getElementById('clientsKpiGrid');
+  if (kpi) kpi.innerHTML = `
+    <div class="inv-kpi"><div class="inv-kpi-label">Clients</div><div class="inv-kpi-val">${ledger.length}</div><div class="inv-kpi-sub">${repeat} repeat buyer${repeat === 1 ? '' : 's'}</div></div>
+    <div class="inv-kpi success"><div class="inv-kpi-label">Total spent</div><div class="inv-kpi-val">${fmtKsh(totalSpend)}</div><div class="inv-kpi-sub">across all clients</div></div>
+    <div class="inv-kpi"><div class="inv-kpi-label">Avg per client</div><div class="inv-kpi-val">${fmtKsh(avg)}</div><div class="inv-kpi-sub">lifetime value</div></div>
+    <div class="inv-kpi"><div class="inv-kpi-label">Repeat rate</div><div class="inv-kpi-val">${ledger.length ? Math.round(repeat / ledger.length * 100) : 0}%</div><div class="inv-kpi-sub">bought 2+ times</div></div>
+  `;
+
+  if (!ledger.length) {
+    listEl.innerHTML = '<p style="font-size:13px;color:#999;padding:14px;">No clients yet. When you record a sale and save the buyer\'s name and phone, they show up here so you can message them again.</p>';
+    return;
+  }
+  const q = clientsQuery.toLowerCase();
+  const rows = ledger
+    .filter(c => !q || (c.name || '').toLowerCase().includes(q) || c.phone.includes(q))
+    .sort((a, b) =>
+      clientsSort === 'spend' ? b.spend - a.spend :
+      clientsSort === 'purchases' ? b.purchases.length - a.purchases.length :
+      b.lastAt - a.lastAt);
+  if (!rows.length) { listEl.innerHTML = '<p style="font-size:13px;color:#999;padding:14px;">No clients match your search.</p>'; return; }
+  listEl.innerHTML = rows.map(c => {
+    const items = c.purchases.slice()
+      .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))
+      .map(p => `<span class="client-item">${escapeHtml(p.bagName)}${p.size ? ' · ' + escapeHtml(p.size) : ''} × ${p.qty} · ${fmtKsh(p.amount)}</span>`).join('');
+    return `
+      <div class="client-row">
+        <div class="client-row-main">
+          <div class="client-row-name">${escapeHtml(c.name || 'Unnamed buyer')}</div>
+          <div class="client-row-sub">${escapeHtml(c.phone)} · ${c.purchases.length} purchase${c.purchases.length === 1 ? '' : 's'} · ${fmtKsh(c.spend)} spent · last ${relTime(new Date(c.lastAt).toISOString())}</div>
+          <div class="client-items">${items}</div>
+        </div>
+        <div class="client-row-actions">
+          <button class="btn-admin gold" onclick="clientMessage('${c.phone}')">WhatsApp</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+window.clientMessage = phone => {
+  const c = clientsLedger().find(x => x.phone === phone);
+  const first = (c && c.name ? c.name : 'there').split(' ')[0];
+  const msg = `Hi ${first}! Thanks for shopping with Martin Black. Fresh pieces just landed. Want me to send you what's new?`;
+  window.open(`https://wa.me/${clientWaPhone(phone)}?text=${encodeURIComponent(msg)}`, '_blank');
+};
+document.getElementById('clientsSearch')?.addEventListener('input', e => { clientsQuery = e.target.value.trim(); renderClients(); });
+document.getElementById('clientsSort')?.addEventListener('change', e => { clientsSort = e.target.value; renderClients(); });
+// "NEW" badge on the Clients nav link — dismisses for good once the owner opens the tab.
+(function () {
+  const badge = document.getElementById('clientsNavNew');
+  if (!badge) return;
+  const KEY = 'clients_tab_seen';
+  try { if (localStorage.getItem(KEY)) { badge.style.display = 'none'; return; } } catch (_) {}
+  document.getElementById('clientsNavLink')?.addEventListener('click', () => {
+    badge.style.display = 'none';
+    try { localStorage.setItem(KEY, '1'); } catch (_) {}
+  });
+})();
+
 // ====== WHATSAPP BROADCAST ======
 let broadcastSelectedIds = [];
 let broadcastRecipientsState = {};  // phone -> { name, included }
@@ -1777,6 +1874,7 @@ async function init() {
   renderBroadcastPicker();
   renderBroadcastRecipients();
   renderBroadcastPreview();
+  renderClients();
   renderInsights();
 }
 

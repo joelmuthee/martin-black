@@ -1141,3 +1141,38 @@ html { scroll-behavior: smooth; }
   .ig-sync-row img { width: 72px; height: 72px; }
   .ig-sync-name { font-size: 13px; padding: 6px 8px; }
 }
+
+/* ===== CLIENTS (free CRM roster) ===== */
+.admin-nav-new {
+  display: inline-block; margin-left: 5px;
+  font-size: 9px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #fff; background: var(--gold, #a88847);
+  padding: 1px 5px; border-radius: 4px; vertical-align: middle; line-height: 1.5;
+}
+.clients-controls { display: flex; gap: 10px; flex-wrap: wrap; margin: 16px 0 14px; }
+.clients-controls #clientsSearch {
+  flex: 1; min-width: 180px;
+  padding: 10px 14px; border: 1px solid var(--line, #e6dcc8); border-radius: 10px;
+  font-size: 14px; background: #fff;
+}
+.clients-controls #clientsSearch:focus { outline: none; border-color: var(--gold, #a88847); }
+.clients-list { display: flex; flex-direction: column; gap: 10px; max-height: 620px; overflow-y: auto; }
+.client-row {
+  display: flex; align-items: center; gap: 12px;
+  background: #fff; border: 1px solid var(--line, #e6dcc8); border-radius: 12px;
+  padding: 12px 14px;
+}
+.client-row-main { flex: 1; min-width: 0; }
+.client-row-name { font-size: 15px; font-weight: 700; color: var(--ink, #2a1d10); }
+.client-row-sub { font-size: 12.5px; color: var(--ink-soft, #6b5b48); margin-top: 3px; }
+.client-items { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.client-item {
+  font-size: 11.5px; color: #6b5b3a;
+  background: #faf6ec; border: 1px solid #e8dcbf; border-radius: 99px;
+  padding: 2px 9px; white-space: nowrap;
+}
+.client-row-actions { flex-shrink: 0; }
+@media (max-width: 600px) {
+  .client-row { flex-direction: column; align-items: stretch; }
+  .client-row-actions .btn-admin { width: 100%; }
+}
