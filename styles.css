@@ -603,6 +603,10 @@ img { max-width: 100%; display: block; }
   margin-left: 2px;
 }
 .admin-nav a:hover .admin-nav-count { background: rgba(255,255,255,0.15); color: var(--gold-light); }
+/* Scrollspy — the section you're currently viewing */
+.admin-nav a.active { background: var(--ink); color: var(--gold-light); border-color: var(--ink); }
+.admin-nav a.active .admin-nav-count { background: rgba(255,255,255,0.15); color: var(--gold-light); }
+.admin-nav a.admin-nav-cta.active { background: var(--gold-deep); color: #fff; border-color: var(--gold-deep); }
 
 /* Smooth scroll + offset so sticky nav doesn't hide section headers */
 html { scroll-behavior: smooth; }

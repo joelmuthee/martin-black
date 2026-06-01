@@ -2085,6 +2085,38 @@ async function init() {
   renderBroadcastPreview();
   renderClients();
   renderInsights();
+  initNavScrollSpy();
+}
+
+/* ===== Nav scrollspy — highlight the section currently in view ===== */
+function initNavScrollSpy() {
+  const nav = document.getElementById('adminNav');
+  if (!nav) return;
+  const items = Array.from(nav.querySelectorAll('a[href^="#"]'))
+    .map(a => ({ a, section: document.getElementById(a.getAttribute('href').slice(1)) }))
+    .filter(x => x.section);
+  if (!items.length) return;
+
+  let ticking = false;
+  function update() {
+    ticking = false;
+    const probe = nav.offsetHeight + 24; // line just below the sticky nav
+    let current = items[0];
+    for (const item of items) {
+      if (item.section.getBoundingClientRect().top - probe <= 0) current = item;
+    }
+    // near the bottom of the page → activate the last section
+    if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 4) {
+      current = items[items.length - 1];
+    }
+    items.forEach(({ a }) => a.classList.toggle('active', a === current.a));
+  }
+  function onScroll() {
+    if (!ticking) { ticking = true; requestAnimationFrame(update); }
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll, { passive: true });
+  update();
 }
 
 checkAuth();
