@@ -5,6 +5,7 @@ const ADMIN_TOKEN = atob('dEZmLUVuYVMza2s2V1VWSzZZOENIZ1lkbjBWRmdtX3ZXNURJU3VkMG
 
 let bags = [];
 let settings = {};
+let clients = []; // manually-added clients (server-synced); sale buyers are derived separately
 let editingId = null;
 let stagedImage = null; // { base64, ext, dataUrl }
 let pendingSaleId = null;
@@ -59,7 +60,7 @@ async function apiPublish() {
   const res = await fetch(`${API_BASE}/api/bulk`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN_TOKEN}` },
-    body: JSON.stringify({ bags, settings }),
+    body: JSON.stringify({ bags, settings, clients }),
   });
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Save failed: ${res.status}`); }
 }
@@ -76,6 +77,7 @@ async function apiMutateAndPublish(mutate) {
   const json = await res.json();
   bags = Array.isArray(json.bags) ? json.bags : [];
   settings = json.settings || {};
+  clients = Array.isArray(json.clients) ? json.clients : [];
   await mutate();
   await apiPublish();
 }
@@ -86,6 +88,7 @@ async function loadData() {
   const json = await res.json();
   bags = json.bags || [];
   settings = json.settings || {};
+  clients = Array.isArray(json.clients) ? json.clients : [];
   accountSuspended = !!json.suspended;
 }
 
@@ -1282,6 +1285,18 @@ function clientsLedger() {
       else if (!c.name && s.buyerName) c.name = s.buyerName;
     }
   }
+  // Overlay manually-added clients (may have zero purchases yet).
+  for (const mc of (clients || [])) {
+    if (!mc || !mc.phone) continue;
+    const phone = String(mc.phone).replace(/[^0-9]/g, '');
+    if (phone.length < 9) continue;
+    let c = map.get(phone);
+    if (!c) { c = { phone, name: '', purchases: [], spend: 0, lastAt: 0 }; map.set(phone, c); }
+    c.manualId = mc.id;
+    if (mc.note) c.note = mc.note;
+    if (!c.name && mc.name) c.name = mc.name;
+    if (mc.createdAt) c.addedAt = mc.createdAt;
+  }
   return [...map.values()];
 }
 function clientWaPhone(p) {
@@ -1324,15 +1339,23 @@ function renderClients() {
     const items = c.purchases.slice()
       .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))
       .map(p => `<span class="client-item">${escapeHtml(p.bagName)}${p.size ? ' · ' + escapeHtml(p.size) : ''} × ${p.qty} · ${fmtKsh(p.amount)}</span>`).join('');
+    const has = c.purchases.length;
+    const when = has ? `last ${relTime(new Date(c.lastAt).toISOString())}`
+                     : (c.addedAt ? `added ${relTime(c.addedAt)}` : 'no purchases yet');
+    const manualTag = c.manualId ? '<span class="client-tag">Added manually</span>' : '';
+    const noteLine = c.note ? `<div class="client-note">${escapeHtml(c.note)}</div>` : '';
+    const removeBtn = c.manualId ? `<button class="btn-admin danger" onclick="removeClient('${c.manualId}')">Remove</button>` : '';
     return `
       <div class="client-row">
         <div class="client-row-main">
-          <div class="client-row-name">${escapeHtml(c.name || 'Unnamed buyer')}</div>
-          <div class="client-row-sub">${escapeHtml(c.phone)} · ${c.purchases.length} purchase${c.purchases.length === 1 ? '' : 's'} · ${fmtKsh(c.spend)} spent · last ${relTime(new Date(c.lastAt).toISOString())}</div>
+          <div class="client-row-name">${escapeHtml(c.name || 'Unnamed buyer')}${manualTag}</div>
+          <div class="client-row-sub">${escapeHtml(c.phone)} · ${has} purchase${has === 1 ? '' : 's'} · ${fmtKsh(c.spend)} spent · ${when}</div>
+          ${noteLine}
           <div class="client-items">${items}</div>
         </div>
         <div class="client-row-actions">
           <button class="btn-admin gold" onclick="clientMessage('${c.phone}')">WhatsApp</button>
+          ${removeBtn}
         </div>
       </div>`;
   }).join('');
@@ -1343,19 +1366,123 @@ window.clientMessage = phone => {
   const msg = `Hi ${first}! Thanks for shopping with Martin Black. Fresh pieces just landed. Want me to send you what's new?`;
   window.open(`https://wa.me/${clientWaPhone(phone)}?text=${encodeURIComponent(msg)}`, '_blank');
 };
+// Manually add / remove a client (server-synced via the clients[] list).
+// ----- "Item bought" autocomplete: type → tappable matches → select one -----
+let acItemId = ''; // selected item id ('' = none / contact-only)
+function acRenderResults(q) {
+  const box = document.getElementById('addClientItemResults');
+  const query = (q || '').toLowerCase();
+  if (!query) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  const matches = bags.filter(b => (b.name || '').toLowerCase().includes(query)).slice(0, 12);
+  box.innerHTML = matches.length
+    ? matches.map(b => {
+        const units = Object.values(b.stock || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+        const meta = Object.keys(b.stock || {}).length ? `${units} in stock` : fmtKsh(b.price);
+        return `<button type="button" class="client-item-opt" data-id="${b.id}">${escapeHtml(b.name)}<span>${meta}</span></button>`;
+      }).join('')
+    : '<div class="client-item-empty">No items match.</div>';
+  box.style.display = '';
+}
+function acSelectItem(id) {
+  const bag = bags.find(b => b.id === id);
+  if (!bag) return;
+  acItemId = id;
+  document.getElementById('addClientItemSearch').value = bag.name;
+  document.getElementById('addClientItemResults').style.display = 'none';
+  const sizeSel = document.getElementById('addClientSize');
+  sizeSel.innerHTML = '';
+  const inStock = Object.entries(bag.stock || {}).filter(([, q]) => q > 0);
+  if (inStock.length) {
+    inStock.forEach(([sz, q]) => { const o = document.createElement('option'); o.value = sz; o.textContent = `${sz} (${q} in stock)`; sizeSel.appendChild(o); });
+  } else {
+    const o = document.createElement('option'); o.value = 'One size'; o.textContent = 'One size'; sizeSel.appendChild(o);
+  }
+  document.getElementById('addClientQty').value = 1;
+  document.getElementById('addClientPrice').value = (bag.salePrice > 0 && bag.salePrice < bag.price) ? bag.salePrice : bag.price;
+  document.getElementById('addClientChosen').innerHTML = `Recording a sale for <strong>${escapeHtml(bag.name)}</strong> · <button type="button" id="addClientClearItem">clear</button>`;
+  document.getElementById('addClientChosen').style.display = '';
+  document.getElementById('addClientSaleFields').style.display = '';
+}
+function acClearItem() {
+  acItemId = '';
+  document.getElementById('addClientItemSearch').value = '';
+  document.getElementById('addClientItemResults').style.display = 'none';
+  document.getElementById('addClientChosen').style.display = 'none';
+  document.getElementById('addClientSaleFields').style.display = 'none';
+}
+function openAddClient() {
+  document.getElementById('addClientName').value = '';
+  document.getElementById('addClientPhone').value = '';
+  document.getElementById('addClientNote').value = '';
+  acClearItem();
+  document.getElementById('addClientModal').style.display = 'flex';
+  document.getElementById('addClientName').focus();
+}
+function closeAddClient() { document.getElementById('addClientModal').style.display = 'none'; }
+document.getElementById('clientsAddBtn')?.addEventListener('click', openAddClient);
+document.getElementById('addClientCancelBtn')?.addEventListener('click', closeAddClient);
+document.getElementById('addClientModal')?.addEventListener('click', e => { if (e.target.id === 'addClientModal') closeAddClient(); });
+document.getElementById('addClientItemSearch')?.addEventListener('input', e => {
+  acItemId = '';
+  document.getElementById('addClientChosen').style.display = 'none';
+  document.getElementById('addClientSaleFields').style.display = 'none';
+  acRenderResults(e.target.value.trim());
+});
+document.getElementById('addClientItemResults')?.addEventListener('click', e => {
+  const opt = e.target.closest('.client-item-opt');
+  if (opt) acSelectItem(opt.dataset.id);
+});
+document.getElementById('addClientChosen')?.addEventListener('click', e => {
+  if (e.target.id === 'addClientClearItem') acClearItem();
+});
+document.getElementById('addClientSaveBtn')?.addEventListener('click', async () => {
+  const name = document.getElementById('addClientName').value.trim();
+  const phone = document.getElementById('addClientPhone').value.trim().replace(/[^0-9+]/g, '');
+  const note = document.getElementById('addClientNote').value.trim();
+  if (!name) { showToast('Enter a name.'); return; }
+  if (phone.replace(/[^0-9]/g, '').length < 9) { showToast('Enter a valid phone number.'); return; }
+  const itemId = acItemId;
+  let size, qty, salePrice;
+  if (itemId) {
+    size = document.getElementById('addClientSize').value;
+    qty = parseInt(document.getElementById('addClientQty').value, 10) || 1;
+    salePrice = parseInt(document.getElementById('addClientPrice').value, 10);
+  }
+  const btn = document.getElementById('addClientSaveBtn');
+  btn.disabled = true;
+  try {
+    await apiMutateAndPublish(() => {
+      if (!Array.isArray(clients)) clients = [];
+      const norm = phone.replace(/[^0-9]/g, '');
+      const existing = clients.find(c => String(c.phone).replace(/[^0-9]/g, '') === norm);
+      if (existing) { existing.name = name; existing.note = note; }
+      else clients.push({ id: 'c_' + Date.now(), name, phone, note, createdAt: new Date().toISOString() });
+      if (itemId) {
+        const bag = bags.find(b => b.id === itemId);
+        if (!bag) throw new Error('Item no longer exists — refresh admin');
+        if (bag.stock && bag.stock[size] !== undefined) bag.stock[size] = Math.max(0, bag.stock[size] - qty);
+        if (!bag.sales) bag.sales = [];
+        bag.sales.push({ size, qty, salePrice: salePrice || bag.price, buyerName: name, buyerPhone: phone, notes: note, soldAt: new Date().toISOString() });
+      }
+    });
+    closeAddClient();
+    renderClients(); renderDashboard(); renderInventory(); renderList();
+    showToast(itemId ? 'Client saved + sale recorded.' : 'Client saved.');
+  } catch (e) { showToast('Save failed: ' + e.message); }
+  finally { btn.disabled = false; }
+});
+window.removeClient = async (id) => {
+  if (!await confirmAction('Remove this client from your list? Their past sales (if any) stay in your records.', 'Remove')) return;
+  try {
+    await apiMutateAndPublish(() => { clients = (clients || []).filter(c => c.id !== id); });
+    renderClients();
+    showToast('Client removed.');
+  } catch (e) { showToast('Remove failed: ' + e.message); }
+};
 document.getElementById('clientsSearch')?.addEventListener('input', e => { clientsQuery = e.target.value.trim(); renderClients(); });
 document.getElementById('clientsSort')?.addEventListener('change', e => { clientsSort = e.target.value; renderClients(); });
-// "NEW" badge on the Clients nav link — dismisses for good once the owner opens the tab.
-(function () {
-  const badge = document.getElementById('clientsNavNew');
-  if (!badge) return;
-  const KEY = 'clients_tab_seen';
-  try { if (localStorage.getItem(KEY)) { badge.style.display = 'none'; return; } } catch (_) {}
-  document.getElementById('clientsNavLink')?.addEventListener('click', () => {
-    badge.style.display = 'none';
-    try { localStorage.setItem(KEY, '1'); } catch (_) {}
-  });
-})();
+// "NEW" badge on the Clients nav link — kept permanently visible (owner asked
+// for it to always show). No auto-dismiss; the badge renders from the HTML/CSS.
 
 // ====== WHATSAPP BROADCAST ======
 let broadcastSelectedIds = [];

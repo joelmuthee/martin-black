@@ -746,7 +746,7 @@ html { scroll-behavior: smooth; }
 .admin-form h2 { font-family: var(--serif); font-size: 24px; margin-bottom: 18px; }
 .field { margin-bottom: 14px; }
 .field label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-soft); margin-bottom: 6px; }
-.field input[type="text"], .field input[type="number"], .field input[type="url"], .field input[type="tel"], .field textarea, .field select {
+.field input[type="text"], .field input[type="number"], .field input[type="url"], .field input[type="tel"], .field input[type="search"], .field textarea, .field select {
   width: 100%; padding: 11px 14px; border: 1px solid var(--line); border-radius: 8px; font-family: inherit; font-size: 14px; background: #fff; color: var(--ink);
 }
 .field textarea { resize: vertical; min-height: 80px; }
@@ -1171,7 +1171,18 @@ html { scroll-behavior: smooth; }
   background: #faf6ec; border: 1px solid #e8dcbf; border-radius: 99px;
   padding: 2px 9px; white-space: nowrap;
 }
-.client-row-actions { flex-shrink: 0; }
+.client-row-actions { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
+.client-tag { display: inline-block; margin-left: 8px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #6b5b3a; background: #f3ead6; border: 1px solid #e3d3ad; border-radius: 4px; padding: 1px 6px; vertical-align: middle; }
+.client-note { font-size: 12.5px; color: var(--ink-soft, #6b5b48); margin-top: 5px; font-style: italic; }
+/* Add-client item autocomplete */
+.client-item-results { border: 1px solid var(--line, #e6dcc8); border-radius: 10px; max-height: 220px; overflow-y: auto; margin-top: 6px; background: #fff; }
+.client-item-opt { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 12px; border: 0; border-bottom: 1px solid #f1ead9; background: #fff; font-size: 14px; color: var(--ink, #2a1d10); cursor: pointer; }
+.client-item-opt:last-child { border-bottom: 0; }
+.client-item-opt:hover, .client-item-opt:active { background: #faf6ec; }
+.client-item-opt span { color: #9a8e78; font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+.client-item-empty { padding: 10px 12px; font-size: 13px; color: #999; }
+.client-item-chosen { margin-top: 8px; font-size: 13px; color: var(--ink-soft, #6b5b48); }
+.client-item-chosen button { background: none; border: 0; color: #b00020; font-size: 13px; cursor: pointer; text-decoration: underline; padding: 0; }
 @media (max-width: 600px) {
   .client-row { flex-direction: column; align-items: stretch; }
   .client-row-actions .btn-admin { width: 100%; }

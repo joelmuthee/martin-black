@@ -9,7 +9,7 @@
 <meta name="theme-color" content="#3d2817">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20260601d">
+<link rel="stylesheet" href="styles.css?v=20260601e">
 <script src="https://www.google.com/recaptcha/enterprise.js?render=6LeDBFwpAAAAAJe8ux9-imrqZ2ueRsEtdiWoDDpX" async defer></script>
 </head>
 <body style="background:#f8f6f2;">
@@ -174,6 +174,7 @@
         <option value="spend">Highest spend</option>
         <option value="purchases">Most purchases</option>
       </select>
+      <button class="btn-admin primary" id="clientsAddBtn" type="button">+ Add client</button>
     </div>
     <div id="clientsList" class="clients-list"></div>
   </section>
@@ -492,6 +493,43 @@
   </div>
 </div>
 
-<script src="admin.js?v=20260601d"></script>
+<!-- ADD CLIENT MODAL -->
+<div id="addClientModal" class="modal" style="display:none;">
+  <div class="modal-card">
+    <h3>Add a client</h3>
+    <p class="sub">Save a contact — a DM enquiry, a walk-in, a referral. Optionally pick what they bought and it's recorded as a real sale.</p>
+    <div class="field">
+      <label>Name</label>
+      <input id="addClientName" type="text" placeholder="e.g. Sarah Kamau">
+    </div>
+    <div class="field">
+      <label>Phone <small style="font-weight:400;color:#999;">— include the leading 0 or 254</small></label>
+      <input id="addClientPhone" type="tel" placeholder="0712345678">
+    </div>
+    <div class="field">
+      <label>Item bought <small style="font-weight:400;color:#999;">— optional. Type to find an item; pick it to record a real sale (drops stock, counts in your Sales totals). Leave blank to just save the contact.</small></label>
+      <input id="addClientItemSearch" type="search" placeholder="Start typing an item name…" autocomplete="off">
+      <div id="addClientItemResults" class="client-item-results" style="display:none;"></div>
+      <div id="addClientChosen" class="client-item-chosen" style="display:none;"></div>
+    </div>
+    <div id="addClientSaleFields" style="display:none;">
+      <div class="field-row">
+        <div class="field"><label>Size</label><select id="addClientSize"></select></div>
+        <div class="field"><label>Qty</label><input id="addClientQty" type="number" min="1" value="1"></div>
+        <div class="field"><label>Price (Ksh)</label><input id="addClientPrice" type="number" min="0" step="100"></div>
+      </div>
+    </div>
+    <div class="field">
+      <label>Note <small style="font-weight:400;color:#999;">optional</small></label>
+      <input id="addClientNote" type="text" placeholder="e.g. asked about size 42 loafers">
+    </div>
+    <div class="admin-actions" style="margin-top:18px;">
+      <button class="btn-admin primary" id="addClientSaveBtn">Save client</button>
+      <button class="btn-admin danger" id="addClientCancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="admin.js?v=20260601e"></script>
 </body>
 </html>

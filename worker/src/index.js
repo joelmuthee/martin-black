@@ -558,6 +558,9 @@ export default {
           return nb;
         });
       }
+      // The manually-added clients list is owner-only CRM data (names + phones) —
+      // never expose it publicly. Admin (Bearer) keeps it for the Clients tab.
+      if (!admin && data.clients) delete data.clients;
       return json(data, 200, admin ? { "Cache-Control": "no-store" } : { "Cache-Control": "public, max-age=10" });
     }
 
@@ -678,6 +681,7 @@ export default {
         settings: body.settings || {},
       };
       if (Array.isArray(body.sets)) payload.sets = body.sets;
+      if (Array.isArray(body.clients)) payload.clients = body.clients;
       await env.BAGS.put("data", JSON.stringify(payload));
       return json({ ok: true, count: body.bags.length, sets: payload.sets?.length || 0 });
     }
