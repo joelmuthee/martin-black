@@ -71,7 +71,7 @@ async function apiPublish() {
 // INSIDE the callback — anything captured before the refetch is stale. A mutator
 // may throw to abort the save.
 async function apiMutateAndPublish(mutate) {
-  const res = await fetch(`${API_BASE}/api/bags?_=${Date.now()}`);
+  const res = await fetch(`${API_BASE}/api/bags?_=${Date.now()}`, { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } });
   if (!res.ok) throw new Error(`Failed to load fresh data: ${res.status}`);
   const json = await res.json();
   bags = Array.isArray(json.bags) ? json.bags : [];
@@ -82,7 +82,7 @@ async function apiMutateAndPublish(mutate) {
 
 let accountSuspended = false;
 async function loadData() {
-  const res = await fetch(`${API_BASE}/api/bags?_=${Date.now()}`);
+  const res = await fetch(`${API_BASE}/api/bags?_=${Date.now()}`, { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } });
   const json = await res.json();
   bags = json.bags || [];
   settings = json.settings || {};

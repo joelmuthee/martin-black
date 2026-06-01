@@ -541,7 +541,24 @@ export default {
       const data = raw ? JSON.parse(raw) : { bags: [], settings: {} };
       // Billing kill-switch: separate KV key so the owner's Publish can't clear it.
       data.suspended = (await env.BAGS.get("suspended")) === "1";
-      return json(data, 200, { "Cache-Control": "public, max-age=10" });
+      // PRIVACY: strip buyer PII (sales[].buyerName/buyerPhone/notes, soldTo) for
+      // unauthed callers. The storefront only reads sold/price/salePrice/sales.length,
+      // never buyer details. The admin sends a Bearer token and gets the full data.
+      const admin = isAuthed(request, env);
+      if (!admin && Array.isArray(data.bags)) {
+        data.bags = data.bags.map(b => {
+          if (!b || typeof b !== "object") return b;
+          let nb = b;
+          if ("soldTo" in nb) { const { soldTo, ...r } = nb; nb = r; }
+          if (Array.isArray(nb.sales)) nb = { ...nb, sales: nb.sales.map(s => {
+            if (!s || typeof s !== "object") return s;
+            const { buyerName, buyerPhone, notes, name, phone, buyer, ...keep } = s;
+            return keep;
+          }) };
+          return nb;
+        });
+      }
+      return json(data, 200, admin ? { "Cache-Control": "no-store" } : { "Cache-Control": "public, max-age=10" });
     }
 
     // Billing only: flip the suspend flag. Authed by MASTER_TOKEN (not the shop
