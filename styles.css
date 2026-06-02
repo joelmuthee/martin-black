@@ -1207,8 +1207,8 @@ html { scroll-behavior: smooth; }
 
 
 /* ===== POS — SELL IN STORE + RECEIPTS ===== */
-.admin-nav-pos { background: var(--choco); color: #fff !important; }
-.admin-nav-pos.active, .admin-nav-pos:hover { background: var(--choco-deep); color: #fff !important; }
+.admin-nav a.admin-nav-pos { background: var(--choco, var(--ink)); color: #fff !important; }
+.admin-nav a.admin-nav-pos.active, .admin-nav a.admin-nav-pos:hover { background: var(--choco-deep, var(--gold-deep)); color: #fff !important; }
 .pos-sub { font-size: 13.5px; color: var(--ink-soft); margin: -6px 0 14px; line-height: 1.5; }
 .pos-today { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 16px; }
 .pos-today-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; margin-right: 2px; }
