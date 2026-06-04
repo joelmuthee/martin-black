@@ -206,40 +206,93 @@ const API_BASE = 'https://martin-black-api.stawisystems.workers.dev';
   }
 
   function buildCatPills() {
+    initDropdowns();
     const cats = getCategories();
     if (!cats.length) { catPills.innerHTML = ''; return; }
-    catPills.innerHTML = [
-      `<button class="pill pill--cat ${currentCat === 'all' ? 'active' : ''}" data-cat="all">All styles</button>`,
-      ...cats.map(c => `<button class="pill pill--cat ${currentCat === c ? 'active' : ''}" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</button>`)
-    ].join('');
-    catPills.querySelectorAll('.pill--cat').forEach(p => {
-      p.addEventListener('click', () => {
-        catPills.querySelectorAll('.pill--cat').forEach(x => x.classList.remove('active'));
-        p.classList.add('active');
-        currentCat = p.dataset.cat;
-        currentSize = 'all';
+    const groups = [{ label: null, options: [{ val: 'all', text: 'All styles' }].concat(cats.map(c => ({ val: c, text: c }))) }];
+    catPills.innerHTML = dropdownHTML({ kind: 'cat', value: currentCat, ariaLabel: 'Filter by style', groups });
+  }
+
+  // Custom filter dropdown — replaces the native <select> so the open list can
+  // show a "scroll for more" cue (a native option popup is OS-drawn and can't be
+  // styled; it gives no at-rest hint that more options sit below the fold).
+  function dropdownHTML({ kind, value, ariaLabel, groups }) {
+    let cur = null;
+    groups.forEach(g => g.options.forEach(o => { if (o.val === value) cur = o; }));
+    if (!cur) cur = groups[0].options[0];
+    const body = groups.map(g =>
+      (g.label ? `<div class="cdrop-group">${escapeHtml(g.label)}</div>` : '') +
+      g.options.map(o => `<button type="button" role="option" class="cdrop-opt${o.val === value ? ' selected' : ''}" data-val="${escapeHtml(o.val)}"${o.val === value ? ' aria-selected="true"' : ''}>${escapeHtml(o.text)}</button>`).join('')
+    ).join('');
+    const active = value && value !== 'all';
+    return `<div class="cdrop filter-select${active ? ' cdrop--active' : ''}" data-kind="${kind}" aria-label="${escapeHtml(ariaLabel)}">`
+      + `<button type="button" class="cdrop-trigger sort-select" aria-haspopup="listbox" aria-expanded="false"><span class="cdrop-current">${escapeHtml(cur.text)}</span></button>`
+      + `<div class="cdrop-panel" role="listbox" hidden><div class="cdrop-scroll">${body}</div><div class="cdrop-morehint" aria-hidden="true"></div></div>`
+      + `</div>`;
+  }
+
+  function updateDropHint(sc) {
+    const hint = sc.parentElement && sc.parentElement.querySelector('.cdrop-morehint');
+    if (hint) hint.classList.toggle('show', sc.scrollHeight - sc.scrollTop - sc.clientHeight > 4);
+  }
+  function closeAllDropdowns() {
+    document.querySelectorAll('.cdrop.open').forEach(d => {
+      d.classList.remove('open');
+      const p = d.querySelector('.cdrop-panel'); if (p) p.hidden = true;
+      const t = d.querySelector('.cdrop-trigger'); if (t) t.setAttribute('aria-expanded', 'false');
+    });
+  }
+  function openDropdown(drop) {
+    drop.classList.add('open');
+    drop.querySelector('.cdrop-panel').hidden = false;
+    drop.querySelector('.cdrop-trigger').setAttribute('aria-expanded', 'true');
+    const sc = drop.querySelector('.cdrop-scroll');
+    const sel = sc.querySelector('.cdrop-opt.selected');
+    if (sel) sc.scrollTop = Math.max(0, sel.offsetTop - 8);
+    updateDropHint(sc);
+  }
+  // Bind all dropdown interaction ONCE via delegation — buildCatPills/buildSizePills
+  // re-run on every render(), so per-element listeners would leak.
+  let dropdownsBound = false;
+  function initDropdowns() {
+    if (dropdownsBound) return;
+    dropdownsBound = true;
+    document.addEventListener('click', (e) => {
+      const trigger = e.target.closest('.cdrop-trigger');
+      if (trigger) {
+        e.stopPropagation();
+        const drop = trigger.closest('.cdrop');
+        const wasOpen = drop.classList.contains('open');
+        closeAllDropdowns();
+        if (!wasOpen) openDropdown(drop);
+        return;
+      }
+      const opt = e.target.closest('.cdrop-opt');
+      if (opt) {
+        const drop = opt.closest('.cdrop');
+        const val = opt.dataset.val, kind = drop.dataset.kind;
+        closeAllDropdowns();
+        if (kind === 'cat') { currentCat = val; currentSize = 'all'; }
+        else if (kind === 'size') { currentSize = val; }
         currentPage = 1;
         render();
-      });
+        return;
+      }
+      if (!e.target.closest('.cdrop-panel')) closeAllDropdowns();
     });
+    // scroll doesn't bubble — listen in capture phase to catch the inner list scroll
+    document.addEventListener('scroll', (e) => {
+      if (e.target.classList && e.target.classList.contains('cdrop-scroll')) updateDropHint(e.target);
+    }, true);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllDropdowns(); });
   }
 
   function buildSizePills() {
     const sizes = getAllSizesForFilter();
     if (sizes.length < 2) { sizePills.innerHTML = ''; return; }
-    sizePills.innerHTML = [
-      `<button class="pill pill--size ${currentSize === 'all' ? 'active' : ''}" data-size="all">All sizes</button>`,
-      ...sizes.map(s => `<button class="pill pill--size ${currentSize === s ? 'active' : ''}" data-size="${escapeHtml(s)}">${escapeHtml(s)}</button>`)
-    ].join('');
-    sizePills.querySelectorAll('.pill--size').forEach(p => {
-      p.addEventListener('click', () => {
-        sizePills.querySelectorAll('.pill--size').forEach(x => x.classList.remove('active'));
-        p.classList.add('active');
-        currentSize = p.dataset.size;
-        currentPage = 1;
-        render();
-      });
-    });
+    // Martin Black sizes are all EU shoe sizes (numeric) — one sorted list, no optgroups.
+    const groups = [{ label: null, options: [{ val: 'all', text: 'All sizes' }].concat(sizes.map(s => ({ val: s, text: s }))) }];
+    sizePills.innerHTML = dropdownHTML({ kind: 'size', value: currentSize, ariaLabel: 'Filter by size', groups });
   }
 
   function sizeMatch(item) {
