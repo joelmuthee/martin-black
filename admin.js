@@ -434,7 +434,7 @@ function generateDescription(name, cat) {
     `Sizes listed below, while stock lasts.`,
   ];
   const closes = [
-    `Tap Enquire to chat with us on WhatsApp.`,
+    `Tap Check availability to chat with us on WhatsApp.`,
     `Confirm your size on WhatsApp, then pay via M-Pesa Till 5347003.`,
     `Collect in Nairobi CBD or we deliver countrywide.`,
   ];
@@ -1792,7 +1792,7 @@ function buildBroadcastMessage(recipientName) {
     : '';
   const lookUrl = 'https://martin-black.essenceautomations.com';
   const greet = recipientName ? `Hi ${recipientName.split(' ')[0]}! ` : 'Hi! ';
-  return `${greet}It's Martin Black — ${subject || 'fresh stock just landed'}.${itemsBlock}\n\nTap to browse: ${lookUrl}\n\nReply here to enquire. 🤍`;
+  return `${greet}It's Martin Black — ${subject || 'fresh stock just landed'}.${itemsBlock}\n\nTap to browse: ${lookUrl}\n\nReply here to chat. 🤍`;
 }
 
 function renderBroadcastPreview() {

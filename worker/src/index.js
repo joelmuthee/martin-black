@@ -254,7 +254,7 @@ function parseCaptionForBag(caption) {
     name: brand,
     category: category || (isFoot ? "Sneakers" : null),
     stock,
-    description: "Hand-picked footwear, inspected before listing. Photographed exactly as it is. Pick your size below to enquire.",
+    description: "Hand-picked footwear, inspected before listing. Photographed exactly as it is. Pick your size below to check availability.",
   };
 }
 
@@ -1050,7 +1050,7 @@ export default {
           id,
           name: (it.name || "New Item").slice(0, 80),
           category,
-          description: it.description || "Hand-picked footwear, inspected before listing. Photographed exactly as it is. Pick your size below to enquire.",
+          description: it.description || "Hand-picked footwear, inspected before listing. Photographed exactly as it is. Pick your size below to check availability.",
           price: Number.isFinite(it.price) && it.price > 0 ? Math.round(it.price) : 0,
           stock,
           sales: [],

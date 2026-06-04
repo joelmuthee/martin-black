@@ -156,7 +156,7 @@ const API_BASE = 'https://martin-black-api.stawisystems.workers.dev';
     const pricePart = item.price > 0 ? ` (${fmtPrice(item.price)})` : '';
     const body = soldOut
       ? `Hi Martin Black! I saw *${item.name}* is sold out. Will it be back in stock? I'd love to reserve one.`
-      : `Hi Martin Black! I'd like to enquire about *${item.name}*${sizePart}${pricePart} from your catalog.`;
+      : `Hi Martin Black! I'd like to check availability of *${item.name}*${sizePart}${pricePart} from your catalog.`;
     // Append the item's image URL so WhatsApp fetches it and shows a preview thumbnail of the product.
     const imgUrl = item.image || (item.images && item.images[0]) || '';
     const msg = imgUrl ? `${body}\n\n${imgUrl}` : body;
@@ -342,9 +342,8 @@ const API_BASE = 'https://martin-black-api.stawisystems.workers.dev';
           </div>
           <div class="card-actions">
             <a class="btn-card primary${soldOut ? ' soldout' : ''}" href="${whatsappLink(item, soldOut)}" target="_blank" rel="noopener">
-              ${WA_SVG} ${soldOut ? 'Sold out · notify me' : 'Enquire'}
+              ${WA_SVG} ${soldOut ? 'Sold out · notify me' : 'Check availability'}
             </a>
-            ${item.instagramUrl ? `<a class="btn-card ig" href="${item.instagramUrl}" target="_blank" rel="noopener" aria-label="View on Instagram">${IG_SVG} View on IG</a>` : ''}
           </div>
         </div>
       </article>`;
@@ -637,7 +636,7 @@ const API_BASE = 'https://martin-black-api.stawisystems.workers.dev';
     if (!items_saved.length) return;
     const phone = settings.whatsappNumber || '254710307797';
     const lines = items_saved.map((i, idx) => `${idx + 1}. *${i.name}*${i.price > 0 ? ' (' + fmtPrice(i.price) + ')' : ''}`);
-    const msg = `Hi Martin Black! I'd like to enquire about these saved items:\n\n${lines.join('\n')}\n\nAre they available?`;
+    const msg = `Hi Martin Black! I'd like to check availability of these saved items:\n\n${lines.join('\n')}\n\nAre they available?`;
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
   });
 
