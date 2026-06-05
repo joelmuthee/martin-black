@@ -1302,6 +1302,7 @@ html { scroll-behavior: smooth; }
 .owed-lines { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .owed-line { font-size: 12px; color: #6b5b3a; background: #faf6ec; border: 1px solid #e8dcbf; border-radius: 8px; padding: 5px 10px; line-height: 1.45; overflow-wrap: anywhere; }
 .owed-line em { color: var(--ink-soft, #6b5b48); }
+.owed-total { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #e0d3b6; font-weight: 700; font-size: 13.5px; color: var(--ink, #2a1d10); }
 .paid-hint { font-size: 12px; color: #b3301f; margin: 5px 0 0; font-weight: 600; }
 .paid-row { display: flex; gap: 8px; align-items: stretch; }
 .paid-row input { flex: 1; min-width: 0; }

@@ -1730,6 +1730,7 @@ function renderOwed() {
           <div class="client-row-sub">${sub}</div>
           ${noteLine}
           <div class="owed-lines">${items}</div>
+          <div class="owed-total">Total owing: <span class="owed-amount">${fmtKsh(c.owed)}</span></div>
         </div>
         <div class="client-row-actions">${actions}</div>
       </div>`;
