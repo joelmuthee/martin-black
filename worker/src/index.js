@@ -42,6 +42,13 @@ const suspendBlock = async (req, env) => {
   return null;
 };
 
+// SHA-256 hex helper for the owner password flow (Web Crypto, available in
+// Workers). Used by /api/check-password and /api/set-password.
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 const b64ToBytes = b64 => {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
