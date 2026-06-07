@@ -1351,6 +1351,14 @@ html { scroll-behavior: smooth; }
   .rcpt-date { text-align: center; font-size: 10px; margin-top: 6px; }
   .rcpt-foot { text-align: center; margin-top: 8px; font-style: italic; }
 }
+/* Bulk-sell modal rows. .bulksell-row-name flexes to take leftover width and
+   min-width:0 lets long names wrap instead of pushing the size control off.
+   .bsr-size overrides the global select{width:100%} so it sits inline. */
+.bulksell-rows { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; scrollbar-width: thin; padding-right: 2px; margin-top: 4px; }
+.bulksell-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: rgba(0,0,0,0.035); border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; padding: 6px 10px; }
+.bulksell-row-name { flex: 1 1 auto; min-width: 0; font-size: 12.5px; overflow-wrap: anywhere; }
+.bulksell-row .bsr-size { width: auto; max-width: 45%; flex: 0 0 auto; font-size: 12px; padding: 3px 6px; border: 1px solid rgba(0,0,0,0.2); border-radius: 6px; background: #fff; }
+.bulksell-row .bsr-onesize { font-size: 12px; opacity: 0.7; flex: 0 0 auto; white-space: nowrap; }
 /* Mobile: full-screen modal sheets so tall sale/restock modals fit and the
    action buttons stay reachable (sticky footer). dvh/svh not vh, so the
    browser URL bar can't clip the card. 2026-06-07 */
