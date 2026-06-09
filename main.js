@@ -157,9 +157,11 @@ const API_BASE = 'https://martin-black-api.stawisystems.workers.dev';
     const body = soldOut
       ? `Hi Martin Black! I saw *${item.name}* is sold out. Will it be back in stock? I'd love to reserve one.`
       : `Hi Martin Black! I'd like to check availability of *${item.name}*${sizePart}${pricePart} from your catalog.`;
-    // Append the item's image URL so WhatsApp fetches it and shows a preview thumbnail of the product.
-    const imgUrl = item.image || (item.images && item.images[0]) || '';
-    const msg = imgUrl ? `${body}\n\n${imgUrl}` : body;
+    // Append the worker share page (/p/<id>) so WhatsApp renders a real
+    // preview card with the product photo + name + price. A bare image URL
+    // didn't preview reliably across all devices.
+    const shareUrl = item.id ? `${API_BASE}/p/${encodeURIComponent(item.id)}` : '';
+    const msg = shareUrl ? `${body}\n\n${shareUrl}` : body;
     return `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
   }
 

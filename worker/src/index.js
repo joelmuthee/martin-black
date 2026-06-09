@@ -610,6 +610,48 @@ export default {
 
     if (path === "/api/health") return json({ ok: true, time: new Date().toISOString() });
 
+    // Per-item share page for WhatsApp / FB / iMessage link previews. The
+    // catalog Enquire link ends with `${API_BASE}/p/<id>`; the crawler reads
+    // these OG tags and renders a card with the product photo + name + price.
+    // A bare image URL doesn't preview reliably — an OG-tagged HTML page does.
+    // Humans get auto-redirected to the catalogue.
+    if (request.method === "GET" && path.startsWith("/p/")) {
+      const SITE = "https://martin-black.essenceautomations.com";
+      const esc = (s) => String(s || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      const id = decodeURIComponent(path.slice(3));
+      const raw = await env.BAGS.get("data");
+      const items = raw ? (JSON.parse(raw).items || JSON.parse(raw).bags || []) : [];
+      const item = items.find(i => i.id === id);
+      if (!item) return Response.redirect(SITE + "/#shop", 302);
+      const img = item.image || (item.images && item.images[0]) || `${SITE}/images/og-image.jpg`;
+      const mime = /\.png$/i.test(img) ? "image/png" : /\.webp$/i.test(img) ? "image/webp" : "image/jpeg";
+      const price = item.price > 0 ? ` · Ksh ${Number(item.price).toLocaleString("en-US")}` : "";
+      const title = esc(item.name + price);
+      const desc = esc((item.description || "Premium menswear in Nairobi. Tap to enquire on WhatsApp.").slice(0, 160));
+      const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta property="og:type" content="product">
+<meta property="og:site_name" content="Martin Black">
+<meta property="og:title" content="${title}">
+<meta property="og:description" content="${desc}">
+<meta property="og:image" content="${esc(img)}">
+<meta property="og:image:secure_url" content="${esc(img)}">
+<meta property="og:image:type" content="${mime}">
+<meta property="og:image:width" content="1080">
+<meta property="og:image:height" content="1080">
+<meta property="og:image:alt" content="${esc(item.name)}">
+<meta property="og:url" content="${SITE}/#shop">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${title}">
+<meta name="twitter:image" content="${esc(img)}">
+<title>${title} · Martin Black</title>
+<meta http-equiv="refresh" content="0; url=${SITE}/#shop">
+</head><body style="font-family:system-ui;background:#0a0a0a;color:#e0e0e0;text-align:center;padding:40px">Opening Martin Black…
+<script>location.replace(${JSON.stringify(SITE + "/#shop")});</script>
+</body></html>`;
+      return new Response(html, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=300", ...CORS } });
+    }
+
     // Buyer → GHL proxy
     // TODO(GHL setup): create a GoHighLevel form in Martin Black's OWN subaccount
     // and paste its IDs below. Until then we skip the forward so buyers are NOT
